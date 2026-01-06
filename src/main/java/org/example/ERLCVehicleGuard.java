@@ -18,6 +18,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -47,9 +48,9 @@ public class ERLCVehicleGuard extends ListenerAdapter {
             String car = event.getOption("carname").getAsString();
             String roleId = event.getOption("role").getAsRole().getId();
             saveProperty(event.getGuild().getId() + "_v_role_" + car, roleId);
-            event.reply("Car **" + car + "** restricted to role successfully.").setEphemeral(true).queue();
+            event.reply("Car **" + car + "** restricted successfully.").setEphemeral(true).queue();
         } else if ("scan".equals(event.getSubcommandName())) {
-            event.reply("Scan started...").setEphemeral(true).queue();
+            event.reply("Scan started. Check console for results.").setEphemeral(true).queue();
             performScan(event.getGuild());
         }
     }
@@ -73,32 +74,33 @@ public class ERLCVehicleGuard extends ListenerAdapter {
 
                 String requiredRoleId = getProperty(guild.getId() + "_v_role_" + carName);
                 if (requiredRoleId != null) {
-                    // Correct JDA Method: retrieveMembersByPrefix
-                    guild.retrieveMembersByPrefix(robloxOwner, 10).onSuccess(members -> {
-                        boolean isAuthorized = false;
-                        for (Member m : members) {
-                            if (m.getEffectiveName().equalsIgnoreCase(robloxOwner)) {
-                                if (m.getRoles().stream().anyMatch(r -> r.getId().equals(requiredRoleId))) {
-                                    isAuthorized = true;
-                                    break;
-                                }
-                            }
-                        }
+                    // Logic: Search through cached members for an EXACT nickname match
+                    List<Member> members = guild.getMembersByEffectiveName(robloxOwner, true);
+                    
+                    boolean isAuthorized = false;
+                    if (!members.isEmpty()) {
+                        Member m = members.get(0);
+                        isAuthorized = m.getRoles().stream().anyMatch(r -> r.getId().equals(requiredRoleId));
+                    }
 
-                        if (!isAuthorized) {
-                            System.out.println("[Guard] Violation: " + robloxOwner + " in " + carName);
-                            executePenalty(apiKey, robloxOwner, carName);
-                        }
-                    });
+                    if (!isAuthorized) {
+                        System.out.println("[Guard] VIOLATION: " + robloxOwner + " is unauthorized in " + carName);
+                        executePenalty(apiKey, robloxOwner, carName);
+                    } else {
+                        System.out.println("[Guard] AUTH: " + robloxOwner + " is authorized for " + carName);
+                    }
                 }
             }
         });
     }
 
     private void executePenalty(String apiKey, String username, String carName) {
+        // Immediate :load
         sendPrcCommand(apiKey, ":load " + username);
+        
+        // Scheduled :pm (10 seconds later)
         scheduler.schedule(() -> {
-            sendPrcCommand(apiKey, ":pm " + username + " You were loaded. The " + carName + " is restricted.");
+            sendPrcCommand(apiKey, ":pm " + username + " You were loaded. The " + carName + " is a restricted vehicle.");
         }, 10, TimeUnit.SECONDS);
     }
 
