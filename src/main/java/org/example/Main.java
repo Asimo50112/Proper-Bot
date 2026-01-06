@@ -23,7 +23,8 @@ public class Main {
                     .addEventListeners(
                         new ERLCSetupCommand(),   // Handles /erlc-apikey
                         new ERLCRemoteCommand(),  // Handles /c
-                        new JoinCommand()         // Handles /join
+                        new JoinCommand(),
+                            new ERLCStatusCommand()// Handles /join
                     )
                     .build()
                     .awaitReady();
