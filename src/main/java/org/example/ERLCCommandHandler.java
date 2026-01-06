@@ -45,25 +45,28 @@ public class ERLCCommandHandler extends ListenerAdapter {
     public void onSlashCommandInteraction(@NotNull SlashCommandInteractionEvent event) {
         if (event.getGuild() == null) return;
         String guildId = event.getGuild().getId();
-        String commandName = event.getName();
 
-        if (commandName.equals("erlc-apikey")) {
+        // 1. Immediately defer the reply to prevent "Application did not respond"
+        // Ephemeral is set to false so everyone can see the server info, 
+        // except for the API key setup which we handle separately.
+        boolean isPrivate = event.getName().equals("erlc-apikey");
+        event.deferReply(isPrivate).queue(); 
+
+        if (event.getName().equals("erlc-apikey")) {
             handleApiKeySetup(event, guildId);
             return;
         }
 
         String apiKey = getSavedKey(guildId);
         if (apiKey == null) {
-            event.reply("No API key configured for this server. Use /erlc-apikey first.").setEphemeral(true).queue();
+            event.getHook().sendMessage("No API key configured for this server. Use /erlc-apikey first.").queue();
             return;
         }
 
-        event.deferReply().queue();
-
-        if (commandName.equals("c")) {
-            handleInGameCommand(event, apiKey);
-        } else if (commandName.equals("erlc")) {
-            handleSubcommands(event, apiKey);
+        // Handle commands via the Interaction Hook
+        switch (event.getName()) {
+            case "c" -> handleInGameCommand(event, apiKey);
+            case "erlc" -> handleSubcommands(event, apiKey);
         }
     }
 
@@ -89,111 +92,83 @@ public class ERLCCommandHandler extends ListenerAdapter {
         if (sub == null) return;
 
         switch (sub) {
-            case "status" -> erlcService.getStatus(key).thenAccept(res -> {
-                if (res.startsWith("ERROR")) {
-                    event.getHook().sendMessage(res).queue();
-                } else {
-                    JSONObject json = new JSONObject(res);
-                    long ownerId = json.getLong("OwnerId");
-                    JSONArray coOwnersArray = json.getJSONArray("CoOwnerIds");
-
-                    // Step 1: Fetch Owner Profile Link
-                    erlcService.getRobloxProfileLink(ownerId).thenAccept(ownerLink -> {
-                        
-                        // Step 2: Fetch Co-Owner Profile Links
-                        List<CompletableFuture<String>> coOwnerFutures = new ArrayList<>();
-                        for (int i = 0; i < coOwnersArray.length(); i++) {
-                            coOwnerFutures.add(erlcService.getRobloxProfileLink(coOwnersArray.getLong(i)));
-                        }
-
-                        // Step 3: Combine all results
-                        CompletableFuture.allOf(coOwnerFutures.toArray(new CompletableFuture[0])).thenRun(() -> {
-                            StringBuilder coOwnerLinks = new StringBuilder();
-                            for (var future : coOwnerFutures) {
-                                coOwnerLinks.append(future.join()).append("\n");
-                            }
-
-                            EmbedBuilder eb = new EmbedBuilder()
-                                    .setTitle("Server Status: " + json.getString("Name"))
-                                    .addField("Owner", ownerLink, true)
-                                    .addField("Co-Owners", coOwnerLinks.length() > 0 ? coOwnerLinks.toString() : "None", true)
-                                    .addField("Players", json.getInt("CurrentPlayers") + "/" + json.getInt("MaxPlayers"), true)
-                                    .addField("Join Key", json.getString("JoinKey"), true)
-                                    .addField("Team Balance", json.getBoolean("TeamBalance") ? "Enabled" : "Disabled", true)
-                                    .setColor(Color.BLUE);
-                            
-                            event.getHook().sendMessageEmbeds(eb.build()).queue();
-                        });
-                    });
-                }
-            });
-
-            case "players" -> erlcService.getPlayers(key).thenAccept(res -> {
-                if (res.startsWith("ERROR")) {
-                    event.getHook().sendMessage(res).queue();
-                } else {
-                    JSONArray array = new JSONArray(res);
-                    EmbedBuilder eb = new EmbedBuilder().setTitle("Online Players").setColor(Color.CYAN);
-                    if (array.isEmpty()) {
-                        eb.setDescription("The server is currently empty.");
-                    } else {
-                        StringBuilder sb = new StringBuilder();
-                        for (int i = 0; i < array.length(); i++) {
-                            JSONObject p = array.getJSONObject(i);
-                            sb.append("• **").append(p.getString("Player").split(":")[0]).append("**")
-                              .append(" (").append(p.getString("Team")).append(")\n");
-                        }
-                        eb.setDescription(sb.toString());
-                    }
-                    event.getHook().sendMessageEmbeds(eb.build()).queue();
-                }
-            });
-
-            case "killlogs" -> erlcService.getKillLogs(key).thenAccept(res -> {
-                if (res.startsWith("ERROR")) {
-                    event.getHook().sendMessage(res).queue();
-                } else {
-                    JSONArray array = new JSONArray(res);
-                    EmbedBuilder eb = new EmbedBuilder().setTitle("Recent Kill Logs").setColor(Color.RED);
-                    StringBuilder sb = new StringBuilder();
-                    for (int i = 0; i < Math.min(array.length(), 10); i++) {
-                        JSONObject k = array.getJSONObject(i);
-                        sb.append("**").append(k.getString("Killer").split(":")[0]).append("** killed **")
-                          .append(k.getString("Killed").split(":")[0]).append("**\n");
-                    }
-                    eb.setDescription(sb.length() > 0 ? sb.toString() : "No recent activity found.");
-                    event.getHook().sendMessageEmbeds(eb.build()).queue();
-                }
-            });
-
-            case "vehicles" -> erlcService.getVehicles(key).thenAccept(res -> {
-                if (res.startsWith("ERROR")) {
-                    event.getHook().sendMessage(res).queue();
-                } else {
-                    JSONArray array = new JSONArray(res);
-                    EmbedBuilder eb = new EmbedBuilder().setTitle("Spawned Vehicles").setColor(Color.ORANGE);
-                    StringBuilder sb = new StringBuilder();
-                    for (int i = 0; i < Math.min(array.length(), 15); i++) {
-                        JSONObject v = array.getJSONObject(i);
-                        sb.append("**").append(v.getString("Name")).append("** - Owner: ")
-                          .append(v.getString("Owner")).append("\n");
-                    }
-                    eb.setDescription(sb.length() > 0 ? sb.toString() : "No vehicles currently spawned.");
-                    event.getHook().sendMessageEmbeds(eb.build()).queue();
-                }
-            });
+            case "status" -> handleStatus(event, key);
+            case "players" -> erlcService.getPlayers(key).thenAccept(res -> sendListEmbed(event, res, "Online Players", Color.CYAN));
+            case "killlogs" -> erlcService.getKillLogs(key).thenAccept(res -> sendListEmbed(event, res, "Recent Kill Logs", Color.RED));
+            case "vehicles" -> erlcService.getVehicles(key).thenAccept(res -> sendListEmbed(event, res, "Spawned Vehicles", Color.ORANGE));
         }
+    }
+
+    private void handleStatus(SlashCommandInteractionEvent event, String key) {
+        erlcService.getStatus(key).thenAccept(res -> {
+            if (res.startsWith("ERROR")) {
+                event.getHook().sendMessage(res).queue();
+                return;
+            }
+
+            JSONObject json = new JSONObject(res);
+            long ownerId = json.getLong("OwnerId");
+            JSONArray coOwnersArray = json.getJSONArray("CoOwnerIds");
+
+            // Start multiple async handshakes for Roblox profiles
+            CompletableFuture<String> ownerFuture = erlcService.getRobloxProfileLink(ownerId);
+            List<CompletableFuture<String>> coOwnerFutures = new ArrayList<>();
+            for (int i = 0; i < coOwnersArray.length(); i++) {
+                coOwnerFutures.add(erlcService.getRobloxProfileLink(coOwnersArray.getLong(i)));
+            }
+
+            // Coordinate all futures before sending embed
+            CompletableFuture.allOf(coOwnerFutures.toArray(new CompletableFuture[0]))
+                .thenCombine(ownerFuture, (voidUnused, ownerLink) -> {
+                    StringBuilder coOwnerLinks = new StringBuilder();
+                    for (var future : coOwnerFutures) {
+                        coOwnerLinks.append(future.join()).append("\n");
+                    }
+
+                    return new EmbedBuilder()
+                            .setTitle("Server Status: " + json.getString("Name"))
+                            .addField("Owner", ownerLink, true)
+                            .addField("Co-Owners", coOwnerLinks.length() > 0 ? coOwnerLinks.toString() : "None", true)
+                            .addField("Players", json.getInt("CurrentPlayers") + "/" + json.getInt("MaxPlayers"), true)
+                            .addField("Join Key", json.getString("JoinKey"), true)
+                            .addField("Team Balance", json.getBoolean("TeamBalance") ? "Enabled" : "Disabled", true)
+                            .setColor(Color.BLUE)
+                            .build();
+                }).thenAccept(embed -> event.getHook().sendMessageEmbeds(embed).queue());
+        });
+    }
+
+    private void sendListEmbed(SlashCommandInteractionEvent event, String res, String title, Color color) {
+        if (res.startsWith("ERROR")) {
+            event.getHook().sendMessage(res).queue();
+            return;
+        }
+        JSONArray array = new JSONArray(res);
+        EmbedBuilder eb = new EmbedBuilder().setTitle(title).setColor(color);
+        
+        if (array.isEmpty()) {
+            eb.setDescription("No data found.");
+        } else {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < Math.min(array.length(), 15); i++) {
+                JSONObject item = array.getJSONObject(i);
+                // Handle different JSON keys depending on the endpoint
+                if (item.has("Player")) sb.append("• ").append(item.getString("Player").split(":")[0]).append("\n");
+                else if (item.has("Name")) sb.append("• ").append(item.getString("Name")).append("\n");
+            }
+            eb.setDescription(sb.toString());
+        }
+        event.getHook().sendMessageEmbeds(eb.build()).queue();
     }
 
     private void handleApiKeySetup(SlashCommandInteractionEvent event, String guildId) {
         String newKey = event.getOption("key").getAsString();
-        event.deferReply(true).queue();
         erlcService.verifyKey(newKey).thenAccept(isValid -> {
             if (isValid) {
                 saveKey(guildId, newKey);
-                event.getHook().sendMessage("API key verified and saved successfully.").queue();
+                event.getHook().sendMessage("API key verified and saved.").queue();
             } else {
-                event.getHook().sendMessage("Invalid API key. Handshake failed with PRC API.").queue();
+                event.getHook().sendMessage("Invalid API key.").queue();
             }
         });
     }
@@ -206,7 +181,7 @@ public class ERLCCommandHandler extends ListenerAdapter {
                 try (InputStream in = new FileInputStream(file)) { props.load(in); }
             }
             props.setProperty(id, key);
-            try (OutputStream out = new FileOutputStream(file)) { props.store(out, "ERLC Guild Keys"); }
+            try (OutputStream out = new FileOutputStream(file)) { props.store(out, "ERLC Keys"); }
         } catch (IOException e) { e.printStackTrace(); }
     }
 
