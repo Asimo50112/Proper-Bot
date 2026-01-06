@@ -9,7 +9,7 @@ public class Main {
     private static String token;
 
     public static void main(String[] args) throws Exception {
-        // Step 1: Load config
+        // Step 1: Load config from bot-token.properties
         if (!loadConfig()) {
             System.out.println("-------------------------------------------------------");
             System.out.println("CONFIG CREATED: Please put your token in bot-token.properties");
@@ -17,18 +17,22 @@ public class Main {
             return;
         }
 
-        // Step 2: Initialize JDA
+        // Step 2: Initialize JDA with independent command listeners
         try {
-            // Added JoinCommand as an event listener
             JDA jda = JDABuilder.createDefault(token)
-                    .addEventListeners(new ERLCCommandHandler(), new JoinCommand())
+                    .addEventListeners(
+                        new ERLCSetupCommand(),   // Handles /erlc-apikey
+                        new ERLCRemoteCommand(),  // Handles /c
+                        new JoinCommand()         // Handles /join
+                    )
                     .build()
                     .awaitReady();
 
-            // Step 3: Register all slash commands
-            // We register them together to ensure Discord's command list is accurate
+            // Step 3: Register all slash commands with Discord
+            // Each class now provides its own CommandData independently
             jda.updateCommands().addCommands(
-                    ERLCCommandHandler.getCommandData(), 
+                    ERLCSetupCommand.getCommandData(),
+                    ERLCRemoteCommand.getCommandData(),
                     JoinCommand.getCommandData()
             ).queue();
 
