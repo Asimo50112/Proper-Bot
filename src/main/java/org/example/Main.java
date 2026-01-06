@@ -24,7 +24,8 @@ public class Main {
                         new ERLCSetupCommand(),   // Handles /erlc-apikey
                         new ERLCRemoteCommand(),  // Handles /c
                         new JoinCommand(),
-                            new ERLCStatusCommand()// Handles /join
+                        new ERLCStatusCommand(),// Handles /join
+                        new ERLCPlayersCommand
                     )
                     .build()
                     .awaitReady();
