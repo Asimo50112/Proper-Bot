@@ -32,9 +32,10 @@ public class ERLCVehicleGuard extends ListenerAdapter {
         return Commands.slash("vehicle-restrictions", "Manage car restrictions")
                 .addSubcommands(
                     new SubcommandData("add", "Restrict a car to a role")
-                        .addOption(OptionType.STRING, "carname", "Exact name from PRC", true)
-                        .addOption(OptionType.ROLE, "role", "Authorized role", true),
-                    new SubcommandData("scan", "Manual trigger")
+                        .addOption(OptionType.STRING, "carname", "Exact name (use /status to check)", true)
+                        .addOption(OptionType.ROLE, "role", "Role allowed to drive this", true),
+                    new SubcommandData("list", "List all current restrictions"),
+                    new SubcommandData("scan", "Manually trigger a scan")
                 )
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.ADMINISTRATOR));
     }
@@ -42,13 +43,15 @@ public class ERLCVehicleGuard extends ListenerAdapter {
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         if (!event.getName().equals("vehicle-restrictions") || event.getGuild() == null) return;
-        if ("add".equals(event.getSubcommandName())) {
+        String sub = event.getSubcommandName();
+
+        if ("add".equals(sub)) {
             String car = event.getOption("carname").getAsString();
             String roleId = event.getOption("role").getAsRole().getId();
             saveProperty(event.getGuild().getId() + "_v_role_" + car, roleId);
-            event.reply("Saved: **" + car + "** now requires <@&" + roleId + ">").setEphemeral(true).queue();
-        } else if ("scan".equals(event.getSubcommandName())) {
-            event.reply("Manually triggering scan...").setEphemeral(true).queue();
+            event.reply("Restriction set: **" + car + "** now requires <@&" + roleId + ">").setEphemeral(true).queue();
+        } else if ("scan".equals(sub)) {
+            event.reply("Scan triggered. Check console for debug logs.").setEphemeral(true).queue();
             performScan(event.getGuild());
         }
     }
@@ -62,42 +65,52 @@ public class ERLCVehicleGuard extends ListenerAdapter {
                 .header("server-key", apiKey).GET().build();
 
         client.sendAsync(req, HttpResponse.BodyHandlers.ofString()).thenAccept(res -> {
-            if (res.statusCode() != 200) return;
-            JSONArray vehicles = new JSONArray(res.body());
+            if (res.statusCode() != 200) {
+                System.out.println("[Guard] API Error: " + res.statusCode());
+                return;
+            }
 
+            JSONArray vehicles = new JSONArray(res.body());
             for (int i = 0; i < vehicles.length(); i++) {
                 JSONObject v = vehicles.getJSONObject(i);
                 String carName = v.getString("Name");
-                String robloxOwner = v.getString("Owner"); // e.g., "flat_bird"
+                String robloxOwner = v.getString("Owner");
 
+                // Check if this specific car has a restriction
                 String requiredRoleId = getProperty(guild.getId() + "_v_role_" + carName);
                 
                 if (requiredRoleId != null) {
-                    System.out.println("[Guard] Checking restricted car: " + carName + " driven by " + robloxOwner);
+                    System.out.println("[Guard] FOUND RESTRICTED CAR: " + carName + " driven by " + robloxOwner);
                     
-                    // Attempt to find the Discord member
+                    // Match Roblox Name to Discord Member
                     Member target = guild.getMembers().stream()
-                            .filter(m -> m.getEffectiveName().equalsIgnoreCase(robloxOwner) || m.getUser().getName().equalsIgnoreCase(robloxOwner))
+                            .filter(m -> m.getEffectiveName().equalsIgnoreCase(robloxOwner))
                             .findFirst().orElse(null);
 
                     if (target == null) {
-                        System.out.println("[Guard] VIOLATION: Could not find Discord member named " + robloxOwner);
+                        System.out.println("[Guard] VIOLATION: No Discord member found matching nickname '" + robloxOwner + "'");
                         executePenalty(apiKey, robloxOwner, carName);
                     } else if (target.getRoles().stream().noneMatch(r -> r.getId().equals(requiredRoleId))) {
-                        System.out.println("[Guard] VIOLATION: Member " + robloxOwner + " found but lacks required role.");
+                        System.out.println("[Guard] VIOLATION: " + robloxOwner + " found in Discord but lacks the role.");
                         executePenalty(apiKey, robloxOwner, carName);
                     } else {
-                        System.out.println("[Guard] AUTHORIZED: " + robloxOwner + " has the correct role.");
+                        System.out.println("[Guard] PASS: " + robloxOwner + " is authorized.");
                     }
                 }
             }
+        }).exceptionally(ex -> {
+            System.out.println("[Guard] Network Error: " + ex.getMessage());
+            return null;
         });
     }
 
     private void executePenalty(String apiKey, String username, String carName) {
+        // Immediate Load
         sendPrcCommand(apiKey, ":load " + username);
+        
+        // 10-second delay for PM
         scheduler.schedule(() -> {
-            sendPrcCommand(apiKey, ":pm " + username + " The " + carName + " is a restricted vehicle. Please switch cars.");
+            sendPrcCommand(apiKey, ":pm " + username + " You were loaded for driving a restricted car: " + carName);
         }, 10, TimeUnit.SECONDS);
     }
 
@@ -111,17 +124,20 @@ public class ERLCVehicleGuard extends ListenerAdapter {
         client.sendAsync(req, HttpResponse.BodyHandlers.ofString());
     }
 
-    private void saveProperty(String key, String val) {
+    // --- Property Management ---
+    private synchronized void saveProperty(String key, String val) {
         Properties p = new Properties();
         File f = new File(FILE);
         try {
-            if (f.exists()) try (InputStream i = new FileInputStream(f)) { p.load(i); }
+            if (f.exists()) {
+                try (InputStream i = new FileInputStream(f)) { p.load(i); }
+            }
             p.setProperty(key, val);
             try (OutputStream o = new FileOutputStream(f)) { p.store(o, null); }
-        } catch (IOException ignored) {}
+        } catch (IOException e) { e.printStackTrace(); }
     }
 
-    private String getProperty(String key) {
+    private synchronized String getProperty(String key) {
         Properties p = new Properties();
         try (InputStream i = new FileInputStream(FILE)) {
             p.load(i); return p.getProperty(key);
