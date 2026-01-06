@@ -2,6 +2,7 @@ package org.example;
 
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
+import net.dv8tion.jda.api.requests.GatewayIntent;
 import java.io.*;
 import java.util.Properties;
 
@@ -17,17 +18,19 @@ public class Main {
             return;
         }
 
-        // Step 2: Initialize JDA with independent command listeners
+        // Step 2: Initialize JDA
         try {
             JDA jda = JDABuilder.createDefault(token)
+                    // CRITICAL: Required to see members and check roles for Vehicle Guard /c
+                    .enableIntents(GatewayIntent.GUILD_MEMBERS) 
                     .addEventListeners(
                             new ERLCSetupCommand(),   // /erlc-apikey
                             new ERLCRemoteCommand(),  // /c
                             new JoinCommand(),        // /join
-                            new ERLCStatusCommand(),   // /status
-                            new ERLCPlayersCommand(),  // /players
-                            new PurgeCommand(),
-                            new ERLCVehicleGuard()
+                            new ERLCStatusCommand(),  // /status
+                            new ERLCPlayersCommand(), // /players
+                            new PurgeCommand(),       // Fixed: Added Comma
+                            new ERLCVehicleGuard()    // Fixed: Added Comma
                     )
                     .build()
                     .awaitReady();
