@@ -11,19 +11,19 @@ public class Main {
     private static String token;
 
     public static void main(String[] args) throws InterruptedException {
-        // 1. Handle Configuration
+        // Step 1: Initialize configuration file and load token
         if (!loadConfig()) {
-            System.out.println("Fill in your token and restart!");
+            System.out.println("Configuration file created or invalid. Please add your token to " + CONFIG_FILE + " and restart.");
             return;
         }
 
-        // 2. Build the Bot
+        // Step 2: Build JDA instance
         JDA jda = JDABuilder.createDefault(token)
                 .addEventListeners(new CommandHandler())
                 .build()
                 .awaitReady();
 
-        // 3. Register Commands (Modular)
+        // Step 3: Register slash commands through the CommandHandler
         CommandHandler.registerCommands(jda);
 
         System.out.println("Bot is online as: " + jda.getSelfUser().getName());
@@ -35,9 +35,8 @@ public class Main {
 
         if (!file.exists()) {
             try (OutputStream out = new FileOutputStream(file)) {
-                prop.setProperty("bot_token", "PASTE_YOUR_DISCORD_TOKEN_HERE");
+                prop.setProperty("bot_token", "INSERT_TOKEN_HERE");
                 prop.store(out, "Discord Bot Configuration");
-                System.out.println("File created: " + CONFIG_FILE);
                 return false;
             } catch (IOException e) {
                 e.printStackTrace();
@@ -47,7 +46,7 @@ public class Main {
             try (InputStream in = new FileInputStream(file)) {
                 prop.load(in);
                 token = prop.getProperty("bot_token");
-                return token != null && !token.equals("PASTE_YOUR_DISCORD_TOKEN_HERE");
+                return token != null && !token.equals("INSERT_TOKEN_HERE");
             } catch (IOException e) {
                 e.printStackTrace();
                 return false;
