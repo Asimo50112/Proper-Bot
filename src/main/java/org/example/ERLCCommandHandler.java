@@ -89,6 +89,7 @@ public class ERLCCommandHandler extends ListenerAdapter {
                                 .addField("Owner", ownerLink, true)
                                 .addField("Co-Owners", coList.length() > 0 ? coList.toString() : "None", true)
                                 .addField("Players", json.getInt("CurrentPlayers") + "/" + json.getInt("MaxPlayers"), true)
+                            .addField("Join Key", json.getString("JoinKey"), true)
                                 .setColor(Color.BLUE);
                         event.getHook().sendMessageEmbeds(eb.build()).queue();
                     });
