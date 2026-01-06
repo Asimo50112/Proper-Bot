@@ -21,24 +21,24 @@ public class Main {
         try {
             JDA jda = JDABuilder.createDefault(token)
                     .addEventListeners(
-                        new ERLCSetupCommand(),   // Handles /erlc-apikey
-                        new ERLCRemoteCommand(),  // Handles /c
-                        new JoinCommand(),
-                        new ERLCStatusCommand(),// Handles /join
-                        new ERLCPlayersCommand()),
-                        new PurgeCommand
+                            new ERLCSetupCommand(),   // /erlc-apikey
+                            new ERLCRemoteCommand(),  // /c
+                            new JoinCommand(),        // /join
+                            new ERLCStatusCommand(),   // /status
+                            new ERLCPlayersCommand(),  // /players
+                            new PurgeCommand()         // /purge
+                    )
                     .build()
                     .awaitReady();
 
             // Step 3: Register all slash commands with Discord
-            // Each class now provides its own CommandData independently
             jda.updateCommands().addCommands(
                     ERLCSetupCommand.getCommandData(),
                     ERLCRemoteCommand.getCommandData(),
                     JoinCommand.getCommandData(),
                     ERLCStatusCommand.getCommandData(),
                     ERLCPlayersCommand.getCommandData(),
-                    PurgeCommand.getCommandData(),
+                    PurgeCommand.getCommandData()
             ).queue();
 
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
@@ -58,7 +58,7 @@ public class Main {
                     prop.setProperty("bot_token", "INSERT_TOKEN_HERE");
                     prop.store(output, "Discord Bot Token");
                 }
-                return false; 
+                return false;
             }
 
             try (InputStream input = new FileInputStream(configFile)) {
