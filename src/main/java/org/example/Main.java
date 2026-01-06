@@ -4,9 +4,6 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import net.dv8tion.jda.api.utils.MemberCachePolicy;
-import net.dv8tion.jda.api.interactions.commands.build.Commands;
-import net.dv8tion.jda.api.interactions.commands.build.SubcommandData;
-import net.dv8tion.jda.api.interactions.commands.OptionType;
 import java.io.*;
 import java.util.Properties;
 
@@ -17,29 +14,39 @@ public class Main {
         if (!loadConfig()) return;
 
         try {
-            // Pre-initialize JDA to pass it to the Guard
-            JDABuilder builder = JDABuilder.createDefault(token)
+            // Initialize JDA with proper caching for roles/members
+            JDA jda = JDABuilder.createDefault(token)
                     .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.MESSAGE_CONTENT)
-                    .setMemberCachePolicy(MemberCachePolicy.ALL);
+                    .setMemberCachePolicy(MemberCachePolicy.ALL)
+                    .build()
+                    .awaitReady();
 
-            JDA jda = builder.build().awaitReady();
-
-            // Create Guard and Register it
+            // Initialize the Guard (Starts the 20s background loop automatically)
             ERLCVehicleGuard vehicleGuard = new ERLCVehicleGuard(jda);
-            jda.addEventListener(vehicleGuard);
 
-            // Sync Commands
+            // REGISTER ALL LISTENERS
+            jda.addEventListener(
+                    new ERLCSetupCommand(),
+                    new ERLCRemoteCommand(),
+                    new JoinCommand(),
+                    new ERLCStatusCommand(),
+                    new ERLCPlayersCommand(),
+                    new PurgeCommand(),
+                    vehicleGuard
+            );
+
+            // SYNC ALL SLASH COMMANDS TO DISCORD
             jda.updateCommands().addCommands(
-                    Commands.slash("vehicle-restrictions", "Vehicle restriction system")
-                            .addSubcommands(
-                                    new SubcommandData("add", "Restrict a car to a role")
-                                            .addOption(OptionType.STRING, "carname", "Exact PRC Car Name", true)
-                                            .addOption(OptionType.ROLE, "role", "Authorized Role", true),
-                                    new SubcommandData("scan", "Manually trigger scan")
-                            )
-            ).queue();
+                    ERLCSetupCommand.getCommandData(),
+                    ERLCRemoteCommand.getCommandData(),
+                    JoinCommand.getCommandData(),
+                    ERLCStatusCommand.getCommandData(),
+                    ERLCPlayersCommand.getCommandData(),
+                    PurgeCommand.getCommandData(),
+                    ERLCVehicleGuard.getCommandData() // Added back
+            ).queue(success -> System.out.println("Successfully synced all 7 commands."));
 
-            System.out.println("Bot Started. Vehicle Monitoring running every 20s.");
+            System.out.println("Bot is online as: " + jda.getSelfUser().getName());
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -55,7 +62,7 @@ public class Main {
                     prop.setProperty("bot_token", "INSERT_TOKEN_HERE");
                     prop.store(o, null);
                 }
-                System.out.println("Please set token in bot-token.properties");
+                System.out.println("Set token in bot-token.properties and restart.");
                 return false;
             }
             try (InputStream i = new FileInputStream(f)) {
