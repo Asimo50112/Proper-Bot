@@ -23,8 +23,8 @@ public class Main {
 
             JDA jda = JDABuilder.createDefault(token)
                     .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_MESSAGES, GatewayIntent.MESSAGE_CONTENT)
-                    .setMemberCachePolicy(MemberCachePolicy.ALL) // Cache everyone
-                    .setChunkingFilter(ChunkingFilter.ALL)      // Download everyone on start
+                    .setMemberCachePolicy(MemberCachePolicy.ALL)
+                    .setChunkingFilter(ChunkingFilter.ALL) // Force bot to load every member
                     .addEventListeners(
                             new ERLCSetupCommand(),
                             new ERLCRemoteCommand(),
@@ -32,11 +32,12 @@ public class Main {
                             new ERLCStatusCommand(),
                             new ERLCPlayersCommand(),
                             new PurgeCommand(),
-                            vehicleGuard
+                            vehicleGuard 
                     )
                     .build()
                     .awaitReady();
 
+            // Slash Command Registration
             jda.updateCommands().addCommands(
                     ERLCSetupCommand.getCommandData(),
                     ERLCRemoteCommand.getCommandData(),
@@ -47,7 +48,7 @@ public class Main {
                     ERLCVehicleGuard.getCommandData()
             ).queue();
 
-            // Background Loop
+            // Background Loop: Scans every 20 seconds
             ScheduledExecutorService scannerLoop = Executors.newSingleThreadScheduledExecutor();
             scannerLoop.scheduleAtFixedRate(() -> {
                 for (Guild guild : jda.getGuilds()) {
@@ -55,7 +56,7 @@ public class Main {
                 }
             }, 10, 20, TimeUnit.SECONDS);
 
-            System.out.println("Bot Started! Monitoring vehicles every 20 seconds.");
+            System.out.println("Bot Online. Scanner running every 20 seconds.");
 
         } catch (Exception e) { e.printStackTrace(); }
     }
