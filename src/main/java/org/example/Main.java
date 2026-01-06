@@ -25,8 +25,7 @@ public class Main {
                         new ERLCRemoteCommand(),  // Handles /c
                         new JoinCommand(),
                         new ERLCStatusCommand(),// Handles /join
-                        new ERLCPlayersCommand
-                    )
+                        new ERLCPlayersCommand())
                     .build()
                     .awaitReady();
 
@@ -35,7 +34,7 @@ public class Main {
             jda.updateCommands().addCommands(
                     ERLCSetupCommand.getCommandData(),
                     ERLCRemoteCommand.getCommandData(),
-                    JoinCommand.getCommandData()
+                    JoinCommand.getCommandData(),
                     ERLCStatusCommand.getCommandData(),
                     ERLCPlayersCommand.getCommandData()
             ).queue();
