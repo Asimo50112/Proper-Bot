@@ -1,25 +1,46 @@
 package org.example;
 
 import net.dv8tion.jda.api.EmbedBuilder;
+import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
+import net.dv8tion.jda.api.interactions.commands.OptionType;
+import net.dv8tion.jda.api.interactions.commands.build.Commands;
+import net.dv8tion.jda.api.interactions.commands.build.SubcommandData;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.awt.Color;
+import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 public class ERLCCommandHandler extends ListenerAdapter {
+    private static final String KEYS_FILE = "guild-keys.properties";
     private final ERLCService erlcService = new ERLCService();
+
+    public static void registerCommands(JDA jda) {
+        jda.updateCommands().addCommands(
+            Commands.slash("erlc-apikey", "Set and verify the PRC API key")
+                .addOption(OptionType.STRING, "key", "Server-Key from ER:LC", true)
+                .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.ADMINISTRATOR)),
+            Commands.slash("c", "Run an in-game command")
+                .addOption(OptionType.STRING, "cmd", "Command content", true),
+            Commands.slash("erlc", "Server tools")
+                .addSubcommands(new SubcommandData("status", "View status with Roblox links"))
+                .addSubcommands(new SubcommandData("players", "View online players"))
+                .addSubcommands(new SubcommandData("killlogs", "View recent kill logs"))
+        ).queue();
+    }
 
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         if (event.getGuild() == null) return;
-
-        // 1. Defer immediately to extend the 3-second limit to 15 minutes
         boolean isPrivate = event.getName().equals("erlc-apikey");
         event.deferReply(isPrivate).queue();
 
@@ -31,21 +52,12 @@ public class ERLCCommandHandler extends ListenerAdapter {
 
         try {
             switch (event.getName()) {
-                case "erlc" -> {
-                    if ("status".equals(event.getSubcommandName())) {
-                        handleStatus(event, apiKey);
-                    } else {
-                        // Handle other subcommands...
-                        handleOtherSubcommands(event, apiKey);
-                    }
-                }
-                case "c" -> handleInGameCommand(event, apiKey);
                 case "erlc-apikey" -> handleApiKeySetup(event, event.getGuild().getId());
+                case "c" -> handleInGameCommand(event, apiKey);
+                case "erlc" -> handleSubcommands(event, apiKey);
             }
         } catch (Exception e) {
-            // Safety net: Always send a message if code crashes to stop the infinite loop
-            event.getHook().sendMessage("An internal error occurred while processing the command.").queue();
-            e.printStackTrace();
+            event.getHook().sendMessage("An internal error occurred.").queue();
         }
     }
 
@@ -56,55 +68,71 @@ public class ERLCCommandHandler extends ListenerAdapter {
                 return;
             }
 
-            try {
-                JSONObject json = new JSONObject(res);
-                long ownerId = json.getLong("OwnerId");
-                JSONArray coOwnersArray = json.getJSONArray("CoOwnerIds");
+            JSONObject json = new JSONObject(res);
+            long ownerId = json.getLong("OwnerId");
+            JSONArray coOwners = json.getJSONArray("CoOwnerIds");
 
-                // Fetch Owner profile link
-                CompletableFuture<String> ownerFuture = erlcService.getRobloxProfileLink(ownerId);
-                
-                // Fetch Co-Owner profile links
-                List<CompletableFuture<String>> coOwnerFutures = new ArrayList<>();
-                for (int i = 0; i < coOwnersArray.length(); i++) {
-                    coOwnerFutures.add(erlcService.getRobloxProfileLink(coOwnersArray.getLong(i)));
-                }
+            CompletableFuture<String> ownerFuture = erlcService.getRobloxProfileLink(ownerId);
+            List<CompletableFuture<String>> coFutures = new ArrayList<>();
+            for (int i = 0; i < coOwners.length(); i++) coFutures.add(erlcService.getRobloxProfileLink(coOwners.getLong(i)));
 
-                // Create a combined future that times out after 10 seconds to prevent infinite loop
-                CompletableFuture<Void> allDone = CompletableFuture.allOf(coOwnerFutures.toArray(new CompletableFuture[0]));
-                
-                allDone.orTimeout(10, TimeUnit.SECONDS).handle((voidUnused, throwable) -> {
-                    if (throwable != null) {
-                        event.getHook().sendMessage("Error or timeout fetching Roblox usernames.").queue();
-                        return null;
-                    }
-
-                    StringBuilder coOwnerLinks = new StringBuilder();
-                    for (var future : coOwnerFutures) {
-                        coOwnerLinks.append(future.join()).append("\n");
-                    }
-
+            CompletableFuture.allOf(coFutures.toArray(new CompletableFuture[0]))
+                .orTimeout(10, TimeUnit.SECONDS).handle((v, t) -> {
+                    if (t != null) { event.getHook().sendMessage("Roblox API timed out.").queue(); return null; }
+                    
                     ownerFuture.thenAccept(ownerLink -> {
+                        StringBuilder coList = new StringBuilder();
+                        for (var f : coFutures) coList.append(f.join()).append("\n");
+
                         EmbedBuilder eb = new EmbedBuilder()
                                 .setTitle("Server Status: " + json.getString("Name"))
                                 .addField("Owner", ownerLink, true)
-                                .addField("Co-Owners", coOwnerLinks.length() > 0 ? coOwnerLinks.toString() : "None", true)
+                                .addField("Co-Owners", coList.length() > 0 ? coList.toString() : "None", true)
                                 .addField("Players", json.getInt("CurrentPlayers") + "/" + json.getInt("MaxPlayers"), true)
-                                .addField("Join Key", json.getString("JoinKey"), true)
                                 .setColor(Color.BLUE);
-                        
                         event.getHook().sendMessageEmbeds(eb.build()).queue();
                     });
                     return null;
                 });
-            } catch (Exception e) {
-                event.getHook().sendMessage("Failed to parse server data.").queue();
-            }
-        }).exceptionally(ex -> {
-            event.getHook().sendMessage("The PRC API failed to respond.").queue();
-            return null;
         });
     }
 
-    // ... other helper methods (handleInGameCommand, handleOtherSubcommands, etc.) ...
+    private void handleInGameCommand(SlashCommandInteractionEvent event, String apiKey) {
+        erlcService.postCommand(apiKey, event.getOption("cmd").getAsString()).thenAccept(res -> {
+            if (res.startsWith("ERROR")) event.getHook().sendMessage(res).queue();
+            else event.getHook().sendMessageEmbeds(new EmbedBuilder().setTitle("Command Sent").setDescription(new JSONObject(res).getString("message")).setColor(Color.GREEN).build()).queue();
+        });
+    }
+
+    private void handleSubcommands(SlashCommandInteractionEvent event, String key) {
+        String sub = event.getSubcommandName();
+        if (sub.equals("status")) handleStatus(event, key);
+        else if (sub.equals("players")) erlcService.getPlayers(key).thenAccept(res -> event.getHook().sendMessage("```json\n" + res + "```").queue());
+    }
+
+    private void handleApiKeySetup(SlashCommandInteractionEvent event, String guildId) {
+        String newKey = event.getOption("key").getAsString();
+        erlcService.verifyKey(newKey).thenAccept(valid -> {
+            if (valid) { saveKey(guildId, newKey); event.getHook().sendMessage("Key saved.").queue(); }
+            else event.getHook().sendMessage("Invalid key.").queue();
+        });
+    }
+
+    private void saveKey(String id, String key) {
+        Properties p = new Properties();
+        try {
+            File f = new File(KEYS_FILE);
+            if (f.exists()) try (InputStream i = new FileInputStream(f)) { p.load(i); }
+            p.setProperty(id, key);
+            try (OutputStream o = new FileOutputStream(f)) { p.store(o, null); }
+        } catch (IOException e) { e.printStackTrace(); }
+    }
+
+    private String getSavedKey(String id) {
+        Properties p = new Properties();
+        File f = new File(KEYS_FILE);
+        if (!f.exists()) return null;
+        try (InputStream i = new FileInputStream(f)) { p.load(i); return p.getProperty(id); }
+        catch (IOException e) { return null; }
+    }
 }
