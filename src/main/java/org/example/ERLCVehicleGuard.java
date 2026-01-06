@@ -29,12 +29,12 @@ public class ERLCVehicleGuard extends ListenerAdapter {
     private static final String FILE = "guild-keys.properties";
 
     public static CommandData getCommandData() {
-        return Commands.slash("vehicle-restrictions", "Manage car restrictions")
+        return Commands.slash("vehicle-restrictions", "Vehicle restriction system")
                 .addSubcommands(
                     new SubcommandData("add", "Restrict a car to a role")
-                        .addOption(OptionType.STRING, "carname", "Exact name (e.g. 2019 Falcon Interceptor Utility)", true)
-                        .addOption(OptionType.ROLE, "role", "Role allowed to drive this", true),
-                    new SubcommandData("scan", "Manually trigger a scan")
+                        .addOption(OptionType.STRING, "carname", "Exact PRC Car Name", true)
+                        .addOption(OptionType.ROLE, "role", "Authorized Role", true),
+                    new SubcommandData("scan", "Manually force a scan")
                 )
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.ADMINISTRATOR));
     }
@@ -42,13 +42,14 @@ public class ERLCVehicleGuard extends ListenerAdapter {
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         if (!event.getName().equals("vehicle-restrictions") || event.getGuild() == null) return;
+        
         if ("add".equals(event.getSubcommandName())) {
             String car = event.getOption("carname").getAsString();
             String roleId = event.getOption("role").getAsRole().getId();
             saveProperty(event.getGuild().getId() + "_v_role_" + car, roleId);
-            event.reply("Restriction set for **" + car + "**.").setEphemeral(true).queue();
+            event.reply("Car **" + car + "** restricted to role successfully.").setEphemeral(true).queue();
         } else if ("scan".equals(event.getSubcommandName())) {
-            event.reply("Scanning... check console.").setEphemeral(true).queue();
+            event.reply("Scan started...").setEphemeral(true).queue();
             performScan(event.getGuild());
         }
     }
@@ -72,19 +73,21 @@ public class ERLCVehicleGuard extends ListenerAdapter {
 
                 String requiredRoleId = getProperty(guild.getId() + "_v_role_" + carName);
                 if (requiredRoleId != null) {
-                    // FORCE RETRIEVE member by nickname from Discord API
-                    guild.retrieveMembersByNickname(robloxOwner, true).onSuccess(members -> {
-                        boolean authorized = false;
-                        if (!members.isEmpty()) {
-                            Member m = members.get(0);
-                            authorized = m.getRoles().stream().anyMatch(r -> r.getId().equals(requiredRoleId));
+                    // Correct JDA Method: retrieveMembersByPrefix
+                    guild.retrieveMembersByPrefix(robloxOwner, 10).onSuccess(members -> {
+                        boolean isAuthorized = false;
+                        for (Member m : members) {
+                            if (m.getEffectiveName().equalsIgnoreCase(robloxOwner)) {
+                                if (m.getRoles().stream().anyMatch(r -> r.getId().equals(requiredRoleId))) {
+                                    isAuthorized = true;
+                                    break;
+                                }
+                            }
                         }
 
-                        if (!authorized) {
-                            System.out.println("[Guard] VIOLATION: " + robloxOwner + " in " + carName);
+                        if (!isAuthorized) {
+                            System.out.println("[Guard] Violation: " + robloxOwner + " in " + carName);
                             executePenalty(apiKey, robloxOwner, carName);
-                        } else {
-                            System.out.println("[Guard] AUTH: " + robloxOwner + " is cleared.");
                         }
                     });
                 }
@@ -95,7 +98,7 @@ public class ERLCVehicleGuard extends ListenerAdapter {
     private void executePenalty(String apiKey, String username, String carName) {
         sendPrcCommand(apiKey, ":load " + username);
         scheduler.schedule(() -> {
-            sendPrcCommand(apiKey, ":pm " + username + " Restricted vehicle: " + carName);
+            sendPrcCommand(apiKey, ":pm " + username + " You were loaded. The " + carName + " is restricted.");
         }, 10, TimeUnit.SECONDS);
     }
 
