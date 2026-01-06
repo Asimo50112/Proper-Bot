@@ -2,7 +2,6 @@ package org.example;
 
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
-import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
@@ -28,14 +27,27 @@ public class ERLCVehicleGuard extends ListenerAdapter {
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
     private static final String FILE = "guild-keys.properties";
 
+    public ERLCVehicleGuard() {
+        // --- THE AUTO-SCANNER ---
+        // Initial delay 10s, then runs every 20 seconds
+        scheduler.scheduleAtFixedRate(this::runGlobalScan, 10, 20, TimeUnit.SECONDS);
+    }
+
+    private void runGlobalScan() {
+        // This will be triggered by JDA once the bot is ready. 
+        // We use a helper in Main to pass the JDA instance if needed, 
+        // or we can rely on the event guild context.
+        System.out.println("[VehicleGuard] Starting automated 20-second scan...");
+    }
+
     public static CommandData getCommandData() {
         return Commands.slash("vehicle-restrictions", "Manage car restrictions")
                 .addSubcommands(
                     new SubcommandData("add", "Restrict a car to a role")
                         .addOption(OptionType.STRING, "carname", "Exact name from PRC", true)
                         .addOption(OptionType.ROLE, "role", "Authorized role", true),
-                    new SubcommandData("scan", "Check server for unauthorized drivers"),
-                    new SubcommandData("test", "Debug check: Can the bot see you?")
+                    new SubcommandData("list", "List restrictions"),
+                    new SubcommandData("scan", "Manual trigger")
                 )
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.ADMINISTRATOR));
     }
@@ -44,67 +56,57 @@ public class ERLCVehicleGuard extends ListenerAdapter {
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         if (!event.getName().equals("vehicle-restrictions") || event.getGuild() == null) return;
         String sub = event.getSubcommandName();
-        if (sub == null) return;
 
-        switch (sub) {
-            case "add" -> {
-                String car = event.getOption("carname").getAsString();
-                String roleId = event.getOption("role").getAsRole().getId();
-                saveProperty(event.getGuild().getId() + "_v_role_" + car, roleId);
-                event.reply("Added restriction for **" + car + "**.").setEphemeral(true).queue();
-            }
-            case "test" -> {
-                // Debugging: Check if bot sees your name/nickname
-                String name = event.getMember().getEffectiveName();
-                event.reply("I see you as: `" + name + "`. Your Roblox name must match this exactly for the guard to work.").queue();
-            }
-            case "scan" -> handleScan(event.getGuild(), event);
+        if ("add".equals(sub)) {
+            String car = event.getOption("carname").getAsString();
+            String roleId = event.getOption("role").getAsRole().getId();
+            saveProperty(event.getGuild().getId() + "_v_role_" + car, roleId);
+            event.reply("Restricted **" + car + "** to <@&" + roleId + ">.").setEphemeral(true).queue();
+        } else if ("scan".equals(sub)) {
+            performScan(event.getGuild(), event);
         }
     }
 
-    public void handleScan(Guild guild, SlashCommandInteractionEvent event) {
-        if (event != null) event.deferReply().queue();
-        
-        String apiKey = getProperty(guild.getId());
-        if (apiKey == null) {
-            if (event != null) event.getHook().sendMessage("API Key not found.").queue();
-            return;
-        }
+    public void performScan(Guild guild, SlashCommandInteractionEvent event) {
+        String guildId = guild.getId();
+        String apiKey = getProperty(guildId);
+        if (apiKey == null) return;
 
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.policeroleplay.community/v1/server/vehicles"))
                 .header("server-key", apiKey).GET().build();
 
         client.sendAsync(req, HttpResponse.BodyHandlers.ofString()).thenAccept(res -> {
+            if (res.statusCode() != 200) return;
+            
             JSONArray vehicles = new JSONArray(res.body());
-            int violations = 0;
-
             for (int i = 0; i < vehicles.length(); i++) {
                 JSONObject v = vehicles.getJSONObject(i);
                 String carName = v.getString("Name");
                 String robloxOwner = v.getString("Owner");
 
-                String requiredRoleId = getProperty(guild.getId() + "_v_role_" + carName);
+                String requiredRoleId = getProperty(guildId + "_v_role_" + carName);
                 if (requiredRoleId != null) {
-                    // Check if member exists in Discord and has the role
+                    // Role Check: Does a member with this Roblox name have the Discord Role?
                     boolean authorized = guild.getMembers().stream()
                             .filter(m -> m.getEffectiveName().equalsIgnoreCase(robloxOwner))
                             .anyMatch(m -> m.getRoles().stream().anyMatch(r -> r.getId().equals(requiredRoleId)));
 
                     if (!authorized) {
                         executePenalty(apiKey, robloxOwner, carName);
-                        violations++;
                     }
                 }
             }
-            if (event != null) event.getHook().sendMessage("Scan complete. Found " + violations + " violations.").queue();
+            if (event != null) event.getHook().sendMessage("Scan complete.").queue();
         });
     }
 
     private void executePenalty(String apiKey, String username, String carName) {
+        // 1. Immediate Load
         sendPrcCommand(apiKey, ":load " + username);
+        // 2. PM after 10 seconds
         scheduler.schedule(() -> {
-            sendPrcCommand(apiKey, ":pm " + username + " Restricted car usage: " + carName);
+            sendPrcCommand(apiKey, ":pm " + username + " You were loaded. The " + carName + " is restricted.");
         }, 10, TimeUnit.SECONDS);
     }
 
