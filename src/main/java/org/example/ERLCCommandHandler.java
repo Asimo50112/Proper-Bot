@@ -15,7 +15,10 @@ import org.json.JSONObject;
 
 import java.awt.Color;
 import java.io.*;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.CompletableFuture;
 
 public class ERLCCommandHandler extends ListenerAdapter {
     private static final String KEYS_FILE = "guild-keys.properties";
@@ -31,7 +34,7 @@ public class ERLCCommandHandler extends ListenerAdapter {
                 .addOption(OptionType.STRING, "cmd", "Command content", true),
 
             Commands.slash("erlc", "Server management tools")
-                .addSubcommands(new SubcommandData("status", "View server status including owners"))
+                .addSubcommands(new SubcommandData("status", "View server status with Roblox profile links"))
                 .addSubcommands(new SubcommandData("players", "View online players"))
                 .addSubcommands(new SubcommandData("killlogs", "View recent kill logs"))
                 .addSubcommands(new SubcommandData("vehicles", "View spawned vehicles"))
@@ -91,29 +94,37 @@ public class ERLCCommandHandler extends ListenerAdapter {
                     event.getHook().sendMessage(res).queue();
                 } else {
                     JSONObject json = new JSONObject(res);
-                    
-                    // Logic to extract Owner and Co-Owners
                     long ownerId = json.getLong("OwnerId");
                     JSONArray coOwnersArray = json.getJSONArray("CoOwnerIds");
-                    
-                    StringBuilder coOwnerList = new StringBuilder();
-                    if (coOwnersArray.isEmpty()) {
-                        coOwnerList.append("None");
-                    } else {
-                        for (int i = 0; i < coOwnersArray.length(); i++) {
-                            coOwnerList.append(coOwnersArray.get(i)).append(i < coOwnersArray.length() - 1 ? ", " : "");
-                        }
-                    }
 
-                    EmbedBuilder eb = new EmbedBuilder()
-                            .setTitle("Server Status: " + json.getString("Name"))
-                            .addField("Owner ID", String.valueOf(ownerId), true)
-                            .addField("Co-Owner IDs", coOwnerList.toString(), true)
-                            .addField("Players", json.getInt("CurrentPlayers") + "/" + json.getInt("MaxPlayers"), true)
-                            .addField("Join Key", json.getString("JoinKey"), true)
-                            .addField("Team Balance", json.getBoolean("TeamBalance") ? "Enabled" : "Disabled", true)
-                            .setColor(Color.BLUE);
-                    event.getHook().sendMessageEmbeds(eb.build()).queue();
+                    // Step 1: Fetch Owner Profile Link
+                    erlcService.getRobloxProfileLink(ownerId).thenAccept(ownerLink -> {
+                        
+                        // Step 2: Fetch Co-Owner Profile Links
+                        List<CompletableFuture<String>> coOwnerFutures = new ArrayList<>();
+                        for (int i = 0; i < coOwnersArray.length(); i++) {
+                            coOwnerFutures.add(erlcService.getRobloxProfileLink(coOwnersArray.getLong(i)));
+                        }
+
+                        // Step 3: Combine all results
+                        CompletableFuture.allOf(coOwnerFutures.toArray(new CompletableFuture[0])).thenRun(() -> {
+                            StringBuilder coOwnerLinks = new StringBuilder();
+                            for (var future : coOwnerFutures) {
+                                coOwnerLinks.append(future.join()).append("\n");
+                            }
+
+                            EmbedBuilder eb = new EmbedBuilder()
+                                    .setTitle("Server Status: " + json.getString("Name"))
+                                    .addField("Owner", ownerLink, true)
+                                    .addField("Co-Owners", coOwnerLinks.length() > 0 ? coOwnerLinks.toString() : "None", true)
+                                    .addField("Players", json.getInt("CurrentPlayers") + "/" + json.getInt("MaxPlayers"), true)
+                                    .addField("Join Key", json.getString("JoinKey"), true)
+                                    .addField("Team Balance", json.getBoolean("TeamBalance") ? "Enabled" : "Disabled", true)
+                                    .setColor(Color.BLUE);
+                            
+                            event.getHook().sendMessageEmbeds(eb.build()).queue();
+                        });
+                    });
                 }
             });
 
