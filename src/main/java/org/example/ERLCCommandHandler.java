@@ -57,7 +57,19 @@ public class ERLCCommandHandler extends ListenerAdapter {
                 case "erlc" -> handleSubcommands(event, apiKey);
             }
         } catch (Exception e) {
+            e.printStackTrace();
             event.getHook().sendMessage("An internal error occurred.").queue();
+        }
+    }
+
+    private void handleSubcommands(SlashCommandInteractionEvent event, String key) {
+        String sub = event.getSubcommandName();
+        if (sub == null) return;
+        
+        switch (sub) {
+            case "status" -> handleStatus(event, key);
+            case "players" -> handlePlayers(event, key);
+            case "killlogs" -> event.getHook().sendMessage("Kill logs not implemented yet.").queue();
         }
     }
 
@@ -74,12 +86,18 @@ public class ERLCCommandHandler extends ListenerAdapter {
 
             CompletableFuture<String> ownerFuture = erlcService.getRobloxProfileLink(ownerId);
             List<CompletableFuture<String>> coFutures = new ArrayList<>();
-            for (int i = 0; i < coOwners.length(); i++) coFutures.add(erlcService.getRobloxProfileLink(coOwners.getLong(i)));
+            for (int i = 0; i < coOwners.length(); i++) {
+                coFutures.add(erlcService.getRobloxProfileLink(coOwners.getLong(i)));
+            }
 
             CompletableFuture.allOf(coFutures.toArray(new CompletableFuture[0]))
-                .orTimeout(10, TimeUnit.SECONDS).handle((v, t) -> {
-                    if (t != null) { event.getHook().sendMessage("Roblox API timed out.").queue(); return null; }
-                    
+                .orTimeout(10, TimeUnit.SECONDS)
+                .handle((v, t) -> {
+                    if (t != null) {
+                        event.getHook().sendMessage("Roblox API timed out.").queue();
+                        return null;
+                    }
+
                     ownerFuture.thenAccept(ownerLink -> {
                         StringBuilder coList = new StringBuilder();
                         for (var f : coFutures) coList.append(f.join()).append("\n");
@@ -89,90 +107,99 @@ public class ERLCCommandHandler extends ListenerAdapter {
                                 .addField("Owner", ownerLink, true)
                                 .addField("Co-Owners", coList.length() > 0 ? coList.toString() : "None", true)
                                 .addField("Players", json.getInt("CurrentPlayers") + "/" + json.getInt("MaxPlayers"), true)
-                            .addField("Join Key", json.getString("JoinKey"), true)
+                                .addField("Join Key", json.getString("JoinKey"), true)
                                 .setColor(Color.BLUE);
                         event.getHook().sendMessageEmbeds(eb.build()).queue();
                     });
-                    case "players" -> erlcService.getPlayers(key).thenAccept(res -> {
-    if (res.startsWith("ERROR")) {
-        event.getHook().sendMessage(res).queue();
-        return;
-    }
-
-    JSONArray array = new JSONArray(res);
-    EmbedBuilder eb = new EmbedBuilder()
-            .setTitle("Online Players")
-            .setColor(Color.CYAN);
-
-    if (array.isEmpty()) {
-        eb.setDescription("The server is currently empty.");
-        event.getHook().sendMessageEmbeds(eb.build()).queue();
-    } else {
-        // Collect all Roblox profile link handshakes
-        List<CompletableFuture<String>> playerFutures = new ArrayList<>();
-        List<String> teams = new ArrayList<>();
-
-        for (int i = 0; i < array.length(); i++) {
-            JSONObject p = array.getJSONObject(i);
-            // Extract numerical ID from "PlayerName:Id" string
-            long userId = Long.parseLong(p.getString("Player").split(":")[1]);
-            teams.add(p.getString("Team"));
-            playerFutures.add(erlcService.getRobloxProfileLink(userId));
-        }
-
-        // Wait for all player usernames and links to be fetched
-        CompletableFuture.allOf(playerFutures.toArray(new CompletableFuture[0]))
-            .orTimeout(10, TimeUnit.SECONDS).handle((v, t) -> {
-                if (t != null) {
-                    event.getHook().sendMessage("Error or timeout fetching player profiles.").queue();
-                    return null;
-                }
-
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < playerFutures.size(); i++) {
-                    String profileLink = playerFutures.get(i).join();
-                    String team = teams.get(i);
-                    sb.append("• ").append(profileLink).append(" — *").append(team).append("*\n");
-                }
-
-                eb.setDescription(sb.toString());
-                eb.setFooter("Total Players: " + array.length());
-                event.getHook().sendMessageEmbeds(eb.build()).queue();
-                return null;
-            });
-    }
-});
                     return null;
                 });
         });
     }
 
-    private void handleInGameCommand(SlashCommandInteractionEvent event, String apiKey) {
-        erlcService.postCommand(apiKey, event.getOption("cmd").getAsString()).thenAccept(res -> {
-            if (res.startsWith("ERROR")) event.getHook().sendMessage(res).queue();
-            else event.getHook().sendMessageEmbeds(new EmbedBuilder().setTitle("Command Sent").setDescription(new JSONObject(res).getString("message")).setColor(Color.GREEN).build()).queue();
+    private void handlePlayers(SlashCommandInteractionEvent event, String key) {
+        erlcService.getPlayers(key).thenAccept(res -> {
+            if (res.startsWith("ERROR")) {
+                event.getHook().sendMessage(res).queue();
+                return;
+            }
+
+            JSONArray array = new JSONArray(res);
+            EmbedBuilder eb = new EmbedBuilder()
+                    .setTitle("Online Players")
+                    .setColor(Color.CYAN);
+
+            if (array.isEmpty()) {
+                eb.setDescription("The server is currently empty.");
+                event.getHook().sendMessageEmbeds(eb.build()).queue();
+            } else {
+                List<CompletableFuture<String>> playerFutures = new ArrayList<>();
+                List<String> teams = new ArrayList<>();
+
+                for (int i = 0; i < array.length(); i++) {
+                    JSONObject p = array.getJSONObject(i);
+                    // Extract numerical ID from "PlayerName:Id"
+                    String playerData = p.getString("Player");
+                    long userId = Long.parseLong(playerData.split(":")[1]);
+                    teams.add(p.getString("Team"));
+                    playerFutures.add(erlcService.getRobloxProfileLink(userId));
+                }
+
+                CompletableFuture.allOf(playerFutures.toArray(new CompletableFuture[0]))
+                    .orTimeout(10, TimeUnit.SECONDS)
+                    .handle((v, t) -> {
+                        if (t != null) {
+                            event.getHook().sendMessage("Error or timeout fetching player profiles.").queue();
+                            return null;
+                        }
+
+                        StringBuilder sb = new StringBuilder();
+                        for (int i = 0; i < playerFutures.size(); i++) {
+                            String profileLink = playerFutures.get(i).join();
+                            String team = teams.get(i);
+                            sb.append("• ").append(profileLink).append(" — *").append(team).append("*\n");
+                        }
+
+                        eb.setDescription(sb.toString());
+                        eb.setFooter("Total Players: " + array.length());
+                        event.getHook().sendMessageEmbeds(eb.build()).queue();
+                        return null;
+                    });
+            }
         });
     }
 
-    private void handleSubcommands(SlashCommandInteractionEvent event, String key) {
-        String sub = event.getSubcommandName();
-        if (sub.equals("status")) handleStatus(event, key);
-        else if (sub.equals("players")) erlcService.getPlayers(key).thenAccept(res -> event.getHook().sendMessage("```json\n" + res + "```").queue());
+    private void handleInGameCommand(SlashCommandInteractionEvent event, String apiKey) {
+        erlcService.postCommand(apiKey, event.getOption("cmd").getAsString()).thenAccept(res -> {
+            if (res.startsWith("ERROR")) {
+                event.getHook().sendMessage(res).queue();
+            } else {
+                event.getHook().sendMessageEmbeds(new EmbedBuilder()
+                        .setTitle("Command Sent")
+                        .setDescription(new JSONObject(res).getString("message"))
+                        .setColor(Color.GREEN).build()).queue();
+            }
+        });
     }
 
     private void handleApiKeySetup(SlashCommandInteractionEvent event, String guildId) {
         String newKey = event.getOption("key").getAsString();
         erlcService.verifyKey(newKey).thenAccept(valid -> {
-            if (valid) { saveKey(guildId, newKey); event.getHook().sendMessage("Key saved.").queue(); }
-            else event.getHook().sendMessage("Invalid key.").queue();
+            if (valid) {
+                saveKey(guildId, newKey);
+                event.getHook().sendMessage("Key saved and verified.").queue();
+            } else {
+                event.getHook().sendMessage("Invalid key. Please check your PRC Server Key.").queue();
+            }
         });
     }
 
     private void saveKey(String id, String key) {
         Properties p = new Properties();
+        File f = new File(KEYS_FILE);
         try {
-            File f = new File(KEYS_FILE);
-            if (f.exists()) try (InputStream i = new FileInputStream(f)) { p.load(i); }
+            if (f.exists()) {
+                try (InputStream i = new FileInputStream(f)) { p.load(i); }
+            }
             p.setProperty(id, key);
             try (OutputStream o = new FileOutputStream(f)) { p.store(o, null); }
         } catch (IOException e) { e.printStackTrace(); }
@@ -182,7 +209,9 @@ public class ERLCCommandHandler extends ListenerAdapter {
         Properties p = new Properties();
         File f = new File(KEYS_FILE);
         if (!f.exists()) return null;
-        try (InputStream i = new FileInputStream(f)) { p.load(i); return p.getProperty(id); }
-        catch (IOException e) { return null; }
+        try (InputStream i = new FileInputStream(f)) {
+            p.load(i);
+            return p.getProperty(id);
+        } catch (IOException e) { return null; }
     }
 }
