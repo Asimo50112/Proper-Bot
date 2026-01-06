@@ -3,6 +3,7 @@ package org.example;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
@@ -34,7 +35,7 @@ public class ERLCVehicleGuard extends ListenerAdapter {
                     new SubcommandData("add", "Restrict a car to a role")
                         .addOption(OptionType.STRING, "carname", "Exact PRC Car Name", true)
                         .addOption(OptionType.ROLE, "role", "Authorized Role", true),
-                    new SubcommandData("scan", "Manually trigger a scan")
+                    new SubcommandData("scan", "Manual check")
                 )
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.ADMINISTRATOR));
     }
@@ -46,12 +47,10 @@ public class ERLCVehicleGuard extends ListenerAdapter {
         if ("add".equals(event.getSubcommandName())) {
             String car = event.getOption("carname").getAsString();
             String roleId = event.getOption("role").getAsRole().getId();
-            
-            // SAVE: We save exactly what the user typed
             saveProperty(event.getGuild().getId() + "_v_role_" + car, roleId);
-            event.reply("Restriction set: **" + car + "** now requires role <@&" + roleId + ">").setEphemeral(true).queue();
+            event.reply("Restriction Saved: **" + car + "** -> <@&" + roleId + ">").setEphemeral(true).queue();
         } else if ("scan".equals(event.getSubcommandName())) {
-            event.reply("Scan initiated. Results in console.").setEphemeral(true).queue();
+            event.reply("Force scanning...").setEphemeral(true).queue();
             performScan(event.getGuild());
         }
     }
@@ -70,32 +69,38 @@ public class ERLCVehicleGuard extends ListenerAdapter {
 
             for (int i = 0; i < vehicles.length(); i++) {
                 JSONObject v = vehicles.getJSONObject(i);
-                String carName = v.getString("Name"); // Exact name from API
-                String robloxOwner = v.getString("Owner"); // Exact name from API
+                String carName = v.getString("Name");
+                String robloxOwner = v.getString("Owner");
 
-                // LOOKUP: Find if this EXACT car name is restricted
+                // Get the saved Role ID for this car
                 String requiredRoleId = getProperty(guild.getId() + "_v_role_" + carName);
                 
                 if (requiredRoleId != null) {
-                    System.out.println("[Guard] MATCH: " + carName + " is restricted.");
+                    System.out.println("[Guard] Attempting to verify driver: " + robloxOwner + " for car: " + carName);
 
-                    // FIND MEMBER: Checking Discord Nicknames for an exact match
-                    Member target = guild.getMembers().stream()
-                            .filter(m -> m.getEffectiveName().equalsIgnoreCase(robloxOwner))
-                            .findFirst().orElse(null);
+                    // Use retrieveMembersByPrefix to handle cache misses
+                    guild.retrieveMembersByPrefix(robloxOwner, 10).onSuccess(members -> {
+                        boolean isAuthorized = false;
+                        
+                        for (Member m : members) {
+                            if (m.getEffectiveName().equalsIgnoreCase(robloxOwner)) {
+                                // Direct ID-to-ID comparison
+                                for (Role role : m.getRoles()) {
+                                    if (role.getId().equals(requiredRoleId)) {
+                                        isAuthorized = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
 
-                    if (target == null) {
-                        System.out.println("[Guard] VIOLATION: Driver " + robloxOwner + " not found in Discord.");
-                        executePenalty(apiKey, robloxOwner, carName);
-                    } else {
-                        boolean hasRole = target.getRoles().stream().anyMatch(r -> r.getId().equals(requiredRoleId));
-                        if (!hasRole) {
-                            System.out.println("[Guard] VIOLATION: " + robloxOwner + " lacks the required role.");
+                        if (!isAuthorized) {
+                            System.out.println("[Guard] Action Taken: Loading " + robloxOwner);
                             executePenalty(apiKey, robloxOwner, carName);
                         } else {
-                            System.out.println("[Guard] AUTHORIZED: " + robloxOwner + " is cleared for " + carName);
+                            System.out.println("[Guard] Clear: " + robloxOwner + " is authorized.");
                         }
-                    }
+                    });
                 }
             }
         });
@@ -105,10 +110,9 @@ public class ERLCVehicleGuard extends ListenerAdapter {
         // Step 1: Immediate :load
         sendPrcCommand(apiKey, ":load " + username);
         
-        // Step 2: PM exactly 10 seconds later
+        // Step 2: PM 10 seconds later
         scheduler.schedule(() -> {
-            sendPrcCommand(apiKey, ":pm " + username + " You have been loaded. The " + carName + " is a restricted vehicle.");
-            System.out.println("[Guard] Delayed PM sent to " + username);
+            sendPrcCommand(apiKey, ":pm " + username + " You were loaded for driving a restricted car (" + carName + ").");
         }, 10, TimeUnit.SECONDS);
     }
 
