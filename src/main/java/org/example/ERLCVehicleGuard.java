@@ -47,10 +47,11 @@ public class ERLCVehicleGuard extends ListenerAdapter {
         if ("add".equals(event.getSubcommandName())) {
             String car = event.getOption("carname").getAsString();
             String roleId = event.getOption("role").getAsRole().getId();
-            saveProperty(event.getGuild().getId() + "_v_role_" + car, roleId);
-            event.reply("Car **" + car + "** restricted successfully.").setEphemeral(true).queue();
+            // Save as lowercase to make matching easier
+            saveProperty(event.getGuild().getId() + "_v_role_" + car.toLowerCase(), roleId);
+            event.reply("Restriction set for **" + car + "**.").setEphemeral(true).queue();
         } else if ("scan".equals(event.getSubcommandName())) {
-            event.reply("Scan started. Check console for results.").setEphemeral(true).queue();
+            event.reply("Manual scan triggered. Check console for output.").setEphemeral(true).queue();
             performScan(event.getGuild());
         }
     }
@@ -67,27 +68,43 @@ public class ERLCVehicleGuard extends ListenerAdapter {
             if (res.statusCode() != 200) return;
             JSONArray vehicles = new JSONArray(res.body());
 
+            // Load all our saved restrictions for this guild
+            Properties props = getAllProperties();
+
             for (int i = 0; i < vehicles.length(); i++) {
                 JSONObject v = vehicles.getJSONObject(i);
-                String carName = v.getString("Name");
+                String carName = v.getString("Name").toLowerCase();
                 String robloxOwner = v.getString("Owner");
 
-                String requiredRoleId = getProperty(guild.getId() + "_v_role_" + carName);
+                // DEBUG: This will show you exactly what the API sees
+                System.out.println("[Guard] Spotted: " + carName + " owned by " + robloxOwner);
+
+                // Look for any restriction that matches this car
+                String requiredRoleId = null;
+                for (String key : props.stringPropertyNames()) {
+                    if (key.startsWith(guild.getId() + "_v_role_")) {
+                        String restrictedName = key.replace(guild.getId() + "_v_role_", "");
+                        if (carName.contains(restrictedName)) {
+                            requiredRoleId = props.getProperty(key);
+                            break;
+                        }
+                    }
+                }
+
                 if (requiredRoleId != null) {
-                    // Logic: Search through cached members for an EXACT nickname match
+                    final String finalRoleId = requiredRoleId;
+                    // Check Discord for the member
                     List<Member> members = guild.getMembersByEffectiveName(robloxOwner, true);
                     
                     boolean isAuthorized = false;
                     if (!members.isEmpty()) {
                         Member m = members.get(0);
-                        isAuthorized = m.getRoles().stream().anyMatch(r -> r.getId().equals(requiredRoleId));
+                        isAuthorized = m.getRoles().stream().anyMatch(r -> r.getId().equals(finalRoleId));
                     }
 
                     if (!isAuthorized) {
-                        System.out.println("[Guard] VIOLATION: " + robloxOwner + " is unauthorized in " + carName);
-                        executePenalty(apiKey, robloxOwner, carName);
-                    } else {
-                        System.out.println("[Guard] AUTH: " + robloxOwner + " is authorized for " + carName);
+                        System.out.println("[Guard] !!! VIOLATION: " + robloxOwner + " is unauthorized in " + carName);
+                        executePenalty(apiKey, robloxOwner, v.getString("Name"));
                     }
                 }
             }
@@ -95,10 +112,8 @@ public class ERLCVehicleGuard extends ListenerAdapter {
     }
 
     private void executePenalty(String apiKey, String username, String carName) {
-        // Immediate :load
         sendPrcCommand(apiKey, ":load " + username);
-        
-        // Scheduled :pm (10 seconds later)
+        // Delay PM by 10 seconds
         scheduler.schedule(() -> {
             sendPrcCommand(apiKey, ":pm " + username + " You were loaded. The " + carName + " is a restricted vehicle.");
         }, 10, TimeUnit.SECONDS);
@@ -115,19 +130,23 @@ public class ERLCVehicleGuard extends ListenerAdapter {
     }
 
     private void saveProperty(String key, String val) {
-        Properties p = new Properties();
-        File f = new File(FILE);
-        try {
-            if (f.exists()) try (InputStream i = new FileInputStream(f)) { p.load(i); }
-            p.setProperty(key, val);
-            try (OutputStream o = new FileOutputStream(f)) { p.store(o, null); }
-        } catch (IOException ignored) {}
+        Properties p = getAllProperties();
+        p.setProperty(key, val);
+        try (OutputStream o = new FileOutputStream(FILE)) { p.store(o, null); }
+        catch (IOException ignored) {}
     }
 
     private String getProperty(String key) {
+        return getAllProperties().getProperty(key);
+    }
+
+    private Properties getAllProperties() {
         Properties p = new Properties();
-        try (InputStream i = new FileInputStream(FILE)) {
-            p.load(i); return p.getProperty(key);
-        } catch (Exception e) { return null; }
+        File f = new File(FILE);
+        if (f.exists()) {
+            try (InputStream i = new FileInputStream(f)) { p.load(i); }
+            catch (IOException ignored) {}
+        }
+        return p;
     }
 }
