@@ -26,192 +26,121 @@ public class ERLCCommandHandler extends ListenerAdapter {
 
     public static void registerCommands(JDA jda) {
         jda.updateCommands().addCommands(
-            Commands.slash("erlc-apikey", "Set and verify the PRC API key")
-                .addOption(OptionType.STRING, "key", "Server-Key from ER:LC", true)
+            Commands.slash("erlc-apikey", "Set API key")
+                .addOption(OptionType.STRING, "key", "Server Key", true)
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.ADMINISTRATOR)),
-            Commands.slash("c", "Run an in-game command")
-                .addOption(OptionType.STRING, "cmd", "Command content", true),
-            Commands.slash("erlc", "Server tools")
-                .addSubcommands(new SubcommandData("status", "View status with Roblox links"))
-                .addSubcommands(new SubcommandData("players", "View online players"))
-                .addSubcommands(new SubcommandData("killlogs", "View recent kill logs"))
+            Commands.slash("c", "Run command").addOption(OptionType.STRING, "cmd", "Content", true),
+            Commands.slash("erlc", "Tools")
+                .addSubcommands(new SubcommandData("status", "View status"))
+                .addSubcommands(new SubcommandData("players", "View players with ranks"))
         ).queue();
     }
 
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         if (event.getGuild() == null) return;
-        boolean isPrivate = event.getName().equals("erlc-apikey");
-        event.deferReply(isPrivate).queue();
+        event.deferReply(event.getName().equals("erlc-apikey")).queue();
 
         String apiKey = getSavedKey(event.getGuild().getId());
         if (apiKey == null && !event.getName().equals("erlc-apikey")) {
-            event.getHook().sendMessage("No API key configured. Use /erlc-apikey first.").queue();
+            event.getHook().sendMessage("Use /erlc-apikey first.").queue();
             return;
         }
 
-        try {
-            switch (event.getName()) {
-                case "erlc-apikey" -> handleApiKeySetup(event, event.getGuild().getId());
-                case "c" -> handleInGameCommand(event, apiKey);
-                case "erlc" -> handleSubcommands(event, apiKey);
+        switch (event.getName()) {
+            case "erlc-apikey" -> handleApiKeySetup(event, event.getGuild().getId());
+            case "c" -> handleInGameCommand(event, apiKey);
+            case "erlc" -> {
+                String sub = event.getSubcommandName();
+                if ("status".equals(sub)) handleStatus(event, apiKey);
+                else if ("players".equals(sub)) handlePlayersWithRanks(event, apiKey);
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            event.getHook().sendMessage("An internal error occurred.").queue();
-        }
-    }
-
-    private void handleSubcommands(SlashCommandInteractionEvent event, String key) {
-        String sub = event.getSubcommandName();
-        if (sub == null) return;
-        
-        switch (sub) {
-            case "status" -> handleStatus(event, key);
-            case "players" -> handlePlayers(event, key);
-            case "killlogs" -> event.getHook().sendMessage("Kill logs not implemented yet.").queue();
         }
     }
 
     private void handleStatus(SlashCommandInteractionEvent event, String key) {
         erlcService.getStatus(key).thenAccept(res -> {
-            if (res.startsWith("ERROR")) {
-                event.getHook().sendMessage(res).queue();
-                return;
-            }
-
+            if (res.startsWith("ERROR")) { event.getHook().sendMessage(res).queue(); return; }
             JSONObject json = new JSONObject(res);
-            long ownerId = json.getLong("OwnerId");
-            JSONArray coOwners = json.getJSONArray("CoOwnerIds");
-
-            CompletableFuture<String> ownerFuture = erlcService.getRobloxProfileLink(ownerId);
-            List<CompletableFuture<String>> coFutures = new ArrayList<>();
-            for (int i = 0; i < coOwners.length(); i++) {
-                coFutures.add(erlcService.getRobloxProfileLink(coOwners.getLong(i)));
-            }
-
-            CompletableFuture.allOf(coFutures.toArray(new CompletableFuture[0]))
-                .orTimeout(10, TimeUnit.SECONDS)
-                .handle((v, t) -> {
-                    if (t != null) {
-                        event.getHook().sendMessage("Roblox API timed out.").queue();
-                        return null;
-                    }
-
-                    ownerFuture.thenAccept(ownerLink -> {
-                        StringBuilder coList = new StringBuilder();
-                        for (var f : coFutures) coList.append(f.join()).append("\n");
-
-                        EmbedBuilder eb = new EmbedBuilder()
-                                .setTitle("Server Status: " + json.getString("Name"))
-                                .addField("Owner", ownerLink, true)
-                                .addField("Co-Owners", coList.length() > 0 ? coList.toString() : "None", true)
-                                .addField("Players", json.getInt("CurrentPlayers") + "/" + json.getInt("MaxPlayers"), true)
-                                .addField("Join Key", json.getString("JoinKey"), true)
-                                .setColor(Color.BLUE);
-                        event.getHook().sendMessageEmbeds(eb.build()).queue();
-                    });
-                    return null;
-                });
+            
+            erlcService.getRobloxProfileLink(json.getLong("OwnerId")).thenAccept(ownerLink -> {
+                EmbedBuilder eb = new EmbedBuilder()
+                        .setTitle("Server Status: " + json.getString("Name"))
+                        .addField("Owner", ownerLink, true)
+                        .addField("Join Key", json.getString("JoinKey"), true)
+                        .addField("Players", json.getInt("CurrentPlayers") + "/" + json.getInt("MaxPlayers"), true)
+                        .setColor(Color.BLUE);
+                event.getHook().sendMessageEmbeds(eb.build()).queue();
+            });
         });
     }
 
-    private void handlePlayers(SlashCommandInteractionEvent event, String key) {
-        erlcService.getPlayers(key).thenAccept(res -> {
-            if (res.startsWith("ERROR")) {
-                event.getHook().sendMessage(res).queue();
-                return;
-            }
+    private void handlePlayersWithRanks(SlashCommandInteractionEvent event, String key) {
+        erlcService.getStatus(key).thenAccept(statusRes -> {
+            JSONObject statusJson = new JSONObject(statusRes);
+            long ownerId = statusJson.getLong("OwnerId");
+            JSONArray coOwners = statusJson.getJSONArray("CoOwnerIds");
 
-            JSONArray array = new JSONArray(res);
-            EmbedBuilder eb = new EmbedBuilder()
-                    .setTitle("Online Players")
-                    .setColor(Color.CYAN);
+            erlcService.getPlayers(key).thenAccept(playerRes -> {
+                if (playerRes.startsWith("ERROR")) { event.getHook().sendMessage(playerRes).queue(); return; }
+                JSONArray players = new JSONArray(playerRes);
+                
+                List<CompletableFuture<String>> futures = new ArrayList<>();
+                List<String> meta = new ArrayList<>();
 
-            if (array.isEmpty()) {
-                eb.setDescription("The server is currently empty.");
-                event.getHook().sendMessageEmbeds(eb.build()).queue();
-            } else {
-                List<CompletableFuture<String>> playerFutures = new ArrayList<>();
-                List<String> teams = new ArrayList<>();
+                for (int i = 0; i < players.length(); i++) {
+                    JSONObject p = players.getJSONObject(i);
+                    long userId = Long.parseLong(p.getString("Player").split(":")[1]);
+                    
+                    String rank = "Player";
+                    if (userId == ownerId) rank = "Server Owner";
+                    else for (int j = 0; j < coOwners.length(); j++) if (coOwners.getLong(j) == userId) rank = "Co-Owner";
 
-                for (int i = 0; i < array.length(); i++) {
-                    JSONObject p = array.getJSONObject(i);
-                    // Extract numerical ID from "PlayerName:Id"
-                    String playerData = p.getString("Player");
-                    long userId = Long.parseLong(playerData.split(":")[1]);
-                    teams.add(p.getString("Team"));
-                    playerFutures.add(erlcService.getRobloxProfileLink(userId));
+                    meta.add(String.format("— *%s* (%s)", p.getString("Team"), rank));
+                    futures.add(erlcService.getRobloxProfileLink(userId));
                 }
 
-                CompletableFuture.allOf(playerFutures.toArray(new CompletableFuture[0]))
-                    .orTimeout(10, TimeUnit.SECONDS)
-                    .handle((v, t) -> {
-                        if (t != null) {
-                            event.getHook().sendMessage("Error or timeout fetching player profiles.").queue();
-                            return null;
-                        }
-
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                    .orTimeout(10, TimeUnit.SECONDS).handle((v, t) -> {
                         StringBuilder sb = new StringBuilder();
-                        for (int i = 0; i < playerFutures.size(); i++) {
-                            String profileLink = playerFutures.get(i).join();
-                            String team = teams.get(i);
-                            sb.append("• ").append(profileLink).append(" — *").append(team).append("*\n");
-                        }
-
-                        eb.setDescription(sb.toString());
-                        eb.setFooter("Total Players: " + array.length());
-                        event.getHook().sendMessageEmbeds(eb.build()).queue();
+                        for (int i = 0; i < futures.size(); i++) sb.append("• ").append(futures.get(i).join()).append(" ").append(meta.get(i)).append("\n");
+                        event.getHook().sendMessageEmbeds(new EmbedBuilder().setTitle("Online Players").setDescription(sb.length() > 0 ? sb.toString() : "Empty").setColor(Color.CYAN).build()).queue();
                         return null;
                     });
-            }
+            });
         });
     }
 
     private void handleInGameCommand(SlashCommandInteractionEvent event, String apiKey) {
         erlcService.postCommand(apiKey, event.getOption("cmd").getAsString()).thenAccept(res -> {
-            if (res.startsWith("ERROR")) {
-                event.getHook().sendMessage(res).queue();
-            } else {
-                event.getHook().sendMessageEmbeds(new EmbedBuilder()
-                        .setTitle("Command Sent")
-                        .setDescription(new JSONObject(res).getString("message"))
-                        .setColor(Color.GREEN).build()).queue();
-            }
+            if (res.startsWith("ERROR")) event.getHook().sendMessage(res).queue();
+            else event.getHook().sendMessageEmbeds(new EmbedBuilder().setTitle("Success").setDescription(new JSONObject(res).getString("message")).setColor(Color.GREEN).build()).queue();
         });
     }
 
     private void handleApiKeySetup(SlashCommandInteractionEvent event, String guildId) {
-        String newKey = event.getOption("key").getAsString();
-        erlcService.verifyKey(newKey).thenAccept(valid -> {
-            if (valid) {
-                saveKey(guildId, newKey);
-                event.getHook().sendMessage("Key saved and verified.").queue();
-            } else {
-                event.getHook().sendMessage("Invalid key. Please check your PRC Server Key.").queue();
-            }
+        String key = event.getOption("key").getAsString();
+        erlcService.verifyKey(key).thenAccept(valid -> {
+            if (valid) { saveKey(guildId, key); event.getHook().sendMessage("Key saved.").queue(); }
+            else event.getHook().sendMessage("Invalid key.").queue();
         });
     }
 
     private void saveKey(String id, String key) {
         Properties p = new Properties();
-        File f = new File(KEYS_FILE);
         try {
-            if (f.exists()) {
-                try (InputStream i = new FileInputStream(f)) { p.load(i); }
-            }
+            File f = new File(KEYS_FILE);
+            if (f.exists()) try (InputStream i = new FileInputStream(f)) { p.load(i); }
             p.setProperty(id, key);
             try (OutputStream o = new FileOutputStream(f)) { p.store(o, null); }
-        } catch (IOException e) { e.printStackTrace(); }
+        } catch (IOException e) {}
     }
 
     private String getSavedKey(String id) {
         Properties p = new Properties();
         File f = new File(KEYS_FILE);
         if (!f.exists()) return null;
-        try (InputStream i = new FileInputStream(f)) {
-            p.load(i);
-            return p.getProperty(id);
-        } catch (IOException e) { return null; }
+        try (InputStream i = new FileInputStream(f)) { p.load(i); return p.getProperty(id); }
+        catch (IOException e) { return null; }
     }
 }
