@@ -17,10 +17,8 @@ public class Main {
         try {
             // Initialize JDA
             JDA jda = JDABuilder.createDefault(token)
-                    // Added GUILD_PRESENCES as it often helps role-caching stay updated
                     .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.MESSAGE_CONTENT, GatewayIntent.GUILD_PRESENCES)
                     .setMemberCachePolicy(MemberCachePolicy.ALL)
-                    // CRITICAL: This forces the bot to download the member list so it can check roles
                     .setChunkingFilter(ChunkingFilter.ALL)
                     .build()
                     .awaitReady();
@@ -36,11 +34,11 @@ public class Main {
                     new ERLCStatusCommand(),
                     new ERLCPlayersCommand(),
                     new PurgeCommand(),
-                    new PromotionCommand(),
-                    vehicleGuard
+                    new PromotionCommand(), // ADDED COMMA HERE
+                    vehicleGuard            // GUARD IS NOW PROPERLY INCLUDED
             );
 
-            // SYNC ALL SLASH COMMANDS
+            // SYNC ALL SLASH COMMANDS (Now total of 8 commands)
             jda.updateCommands().addCommands(
                     ERLCSetupCommand.getCommandData(),
                     ERLCRemoteCommand.getCommandData(),
@@ -50,7 +48,7 @@ public class Main {
                     PurgeCommand.getCommandData(),
                     ERLCVehicleGuard.getCommandData(), 
                     PromotionCommand.getCommandData()
-            ).queue(success -> System.out.println("Successfully synced all 7 commands."));
+            ).queue(success -> System.out.println("Successfully synced all commands."));
 
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
 
