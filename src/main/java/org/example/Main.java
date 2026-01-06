@@ -4,6 +4,9 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import net.dv8tion.jda.api.utils.MemberCachePolicy;
+import net.dv8tion.jda.api.interactions.commands.build.Commands;
+import net.dv8tion.jda.api.interactions.commands.build.SubcommandData;
+import net.dv8tion.jda.api.interactions.commands.OptionType;
 import java.io.*;
 import java.util.Properties;
 
@@ -11,35 +14,33 @@ public class Main {
     private static String token;
 
     public static void main(String[] args) throws Exception {
-        if (!loadConfig()) {
-            System.out.println("CONFIG CREATED: Please put your token in bot-token.properties");
-            return;
-        }
+        if (!loadConfig()) return;
 
         try {
-            JDA jda = JDABuilder.createDefault(token)
+            // Pre-initialize JDA to pass it to the Guard
+            JDABuilder builder = JDABuilder.createDefault(token)
                     .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.MESSAGE_CONTENT)
-                    .setMemberCachePolicy(MemberCachePolicy.ALL) // Critical for role checks
-                    .build()
-                    .awaitReady();
+                    .setMemberCachePolicy(MemberCachePolicy.ALL);
 
-            // FIX 1: Pass 'jda' into the constructor
-            // This starts the 20-second monitor automatically
-            new ERLCVehicleGuard(jda);
+            JDA jda = builder.build().awaitReady();
 
-            // FIX 2: Manually add the command data since the static method was removed
-            // Note: If you have other command classes, add them here too
+            // Create Guard and Register it
+            ERLCVehicleGuard vehicleGuard = new ERLCVehicleGuard(jda);
+            jda.addEventListener(vehicleGuard);
+
+            // Sync Commands
             jda.updateCommands().addCommands(
-                    net.dv8tion.jda.api.interactions.commands.build.Commands.slash("vehicle-restrictions", "Vehicle restriction system")
+                    Commands.slash("vehicle-restrictions", "Vehicle restriction system")
                             .addSubcommands(
-                                    new net.dv8tion.jda.api.interactions.commands.build.SubcommandData("add", "Restrict a car to a role")
-                                            .addOption(net.dv8tion.jda.api.interactions.commands.OptionType.STRING, "carname", "Exact PRC Car Name", true)
-                                            .addOption(net.dv8tion.jda.api.interactions.commands.OptionType.ROLE, "role", "Authorized Role", true),
-                                    new net.dv8tion.jda.api.interactions.commands.build.SubcommandData("scan", "Manually trigger scan")
+                                    new SubcommandData("add", "Restrict a car to a role")
+                                            .addOption(OptionType.STRING, "carname", "Exact PRC Car Name", true)
+                                            .addOption(OptionType.ROLE, "role", "Authorized Role", true),
+                                    new SubcommandData("scan", "Manually trigger scan")
                             )
             ).queue();
 
-            System.out.println("Bot is online as: " + jda.getSelfUser().getName());
+            System.out.println("Bot Started. Vehicle Monitoring running every 20s.");
+
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -54,6 +55,7 @@ public class Main {
                     prop.setProperty("bot_token", "INSERT_TOKEN_HERE");
                     prop.store(o, null);
                 }
+                System.out.println("Please set token in bot-token.properties");
                 return false;
             }
             try (InputStream i = new FileInputStream(f)) {

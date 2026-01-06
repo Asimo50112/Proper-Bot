@@ -2,7 +2,8 @@ package org.example;
 
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Guild;
-import net.dv8tion.jda.api.entities.Role;
+import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
+import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -16,10 +17,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
-public class ERLCVehicleGuard {
+public class ERLCVehicleGuard extends ListenerAdapter {
     private final JDA jda;
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(java.time.Duration.ofSeconds(10))
@@ -33,21 +32,38 @@ public class ERLCVehicleGuard {
     public ERLCVehicleGuard(JDA jda) {
         this.jda = jda;
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-        // Fixed 20s interval as requested
+        // Start monitoring every 20 seconds
         scheduler.scheduleAtFixedRate(this::checkVehicles, 10, 20, TimeUnit.SECONDS);
     }
 
+    // This handles the /vehicle-restrictions add command
+    @Override
+    public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
+        if (!event.getName().equals("vehicle-restrictions") || event.getGuild() == null) return;
+
+        if ("add".equals(event.getSubcommandName())) {
+            String car = event.getOption("carname").getAsString();
+            String roleId = event.getOption("role").getAsRole().getId();
+
+            saveProperty(event.getGuild().getId() + "_v_role_" + car, roleId);
+            event.reply("Restriction set: **" + car + "** now requires role <@&" + roleId + ">").setEphemeral(true).queue();
+        } else if ("scan".equals(event.getSubcommandName())) {
+            event.reply("Manual scan triggered.").setEphemeral(true).queue();
+            checkVehicles();
+        }
+    }
+
     private void checkVehicles() {
-        Properties config = loadProperties(FILE);
+        Properties config = loadProperties(KEY_FILE);
         Properties linkedUsers = loadProperties(LINK_FILE);
 
-        for (String guildId : config.stringPropertyNames()) {
-            if (!guildId.matches("\\d+")) continue;
-
-            String apiKey = config.getProperty(guildId);
-            // Restriction keys follow: guildId_v_role_CarName
-            // We loop through to find relevant restrictions for this guild
-            scanServer(apiKey, guildId, config, linkedUsers);
+        for (Object keyObj : config.keySet()) {
+            String key = (String) keyObj;
+            // Only process the API Key (which is just the Guild ID)
+            if (key.matches("\\d+")) {
+                String apiKey = config.getProperty(key);
+                scanServer(apiKey, key, config, linkedUsers);
+            }
         }
     }
 
@@ -65,7 +81,6 @@ public class ERLCVehicleGuard {
                 String carName = v.getString("Name");
                 String robloxOwner = v.getString("Owner");
 
-                // Check if this car is restricted in our properties
                 String roleId = config.getProperty(guildId + "_v_role_" + carName);
                 if (roleId != null) {
                     processViolation(guildId, apiKey, robloxOwner, carName, roleId, linkedUsers);
@@ -78,29 +93,24 @@ public class ERLCVehicleGuard {
         Guild guild = jda.getGuildById(guildId);
         if (guild == null) return;
 
-        // Try to find linked Discord ID
         String discordId = linkedUsers.getProperty(robloxOwner);
-        
         if (discordId == null) {
-            // No link? Action immediately as unauthorized
             executeChain(apiKey, robloxOwner, carName, "Unlinked Account");
             return;
         }
 
-        // Retrieve member asynchronously (Fixes 'cannot find symbol' error)
         guild.retrieveMemberById(discordId).queue(member -> {
             boolean hasRole = member.getRoles().stream().anyMatch(r -> r.getId().equals(roleId));
             if (!hasRole) {
-                executeChain(apiKey, robloxOwner, carName, guild.getRoleById(roleId).getName());
+                String roleName = guild.getRoleById(roleId) != null ? guild.getRoleById(roleId).getName() : "Restricted Role";
+                executeChain(apiKey, robloxOwner, carName, roleName);
             }
         }, err -> executeChain(apiKey, robloxOwner, carName, "Missing Discord Data"));
     }
 
     private void executeChain(String apiKey, String username, String carName, String requiredRole) {
-        // 1. Immediate Load
         sendCommand(apiKey, ":load " + username);
 
-        // 2. Scheduled PM (Exactly 10 seconds later)
         CompletableFuture.delayedExecutor(10, TimeUnit.SECONDS).execute(() -> {
             String msg = ":pm " + username + " You were loaded for driving the " + carName + ". Role required: [" + requiredRole + "]";
             sendCommand(apiKey, msg);
@@ -115,6 +125,14 @@ public class ERLCVehicleGuard {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build();
         client.sendAsync(req, HttpResponse.BodyHandlers.discarding());
+    }
+
+    private void saveProperty(String key, String val) {
+        Properties p = loadProperties(KEY_FILE);
+        p.setProperty(key, val);
+        try (OutputStream o = new FileOutputStream(KEY_FILE)) {
+            p.store(o, null);
+        } catch (IOException ignored) {}
     }
 
     private Properties loadProperties(String name) {
