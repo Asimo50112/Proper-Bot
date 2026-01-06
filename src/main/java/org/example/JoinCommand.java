@@ -5,6 +5,7 @@ import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEve
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
+import net.dv8tion.jda.api.interactions.components.buttons.Button;
 import org.json.JSONObject;
 import java.awt.Color;
 import java.io.*;
@@ -49,19 +50,21 @@ public class JoinCommand extends ListenerAdapter {
                     String code = json.getString("JoinKey");
                     String serverName = json.getString("Name");
                     
-                    // The Deep Link
-                    String deepLink = "roblox://placeId=2534724415&launchData=%7B%22psCode%22%3A%22" + code + "%22%7D";
+                    // NEW APPROACH: Use the official HTTPS web link
+                    // This is 100% clickable in Discord and triggers the Roblox App
+                    String webLink = "https://www.roblox.com/games/2534724415?privateServerLinkCode=" + code;
 
                     EmbedBuilder eb = new EmbedBuilder()
                             .setTitle("Join " + serverName)
                             .setColor(Color.GREEN)
-                            .setDescription("### [Click Here to Join the Server](" + deepLink + ")\n" +
-                                    "*If the link above doesn't work, ensure you have Roblox installed.*")
-                            .addField("Manual Join Code", "`" + code + "`", false)
-                            .setFooter("Direct launch links are only supported on some devices.");
+                            .setDescription("### [Click Here to Join the Server](" + webLink + ")")
+                            .addField("Manual Join Code", "`" + code + "`", true)
+                            .setFooter("This link will open your browser and then launch Roblox.");
 
-                    // We send ONLY the embed, NO buttons (to avoid the 50035 error)
-                    event.getHook().sendMessageEmbeds(eb.build()).queue();
+                    // Since this is now an HTTPS link, the Button will work again!
+                    event.getHook().sendMessageEmbeds(eb.build())
+                            .addActionRow(Button.link(webLink, "Join Server"))
+                            .queue();
 
                 } catch (Exception e) {
                     event.getHook().sendMessage("Error: Failed to parse server data.").queue();
