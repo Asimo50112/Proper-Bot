@@ -31,7 +31,7 @@ public class ERLCCommandHandler extends ListenerAdapter {
                 .addOption(OptionType.STRING, "cmd", "Command content", true),
 
             Commands.slash("erlc", "Server management tools")
-                .addSubcommands(new SubcommandData("status", "View server status"))
+                .addSubcommands(new SubcommandData("status", "View server status including owners"))
                 .addSubcommands(new SubcommandData("players", "View online players"))
                 .addSubcommands(new SubcommandData("killlogs", "View recent kill logs"))
                 .addSubcommands(new SubcommandData("vehicles", "View spawned vehicles"))
@@ -91,8 +91,24 @@ public class ERLCCommandHandler extends ListenerAdapter {
                     event.getHook().sendMessage(res).queue();
                 } else {
                     JSONObject json = new JSONObject(res);
+                    
+                    // Logic to extract Owner and Co-Owners
+                    long ownerId = json.getLong("OwnerId");
+                    JSONArray coOwnersArray = json.getJSONArray("CoOwnerIds");
+                    
+                    StringBuilder coOwnerList = new StringBuilder();
+                    if (coOwnersArray.isEmpty()) {
+                        coOwnerList.append("None");
+                    } else {
+                        for (int i = 0; i < coOwnersArray.length(); i++) {
+                            coOwnerList.append(coOwnersArray.get(i)).append(i < coOwnersArray.length() - 1 ? ", " : "");
+                        }
+                    }
+
                     EmbedBuilder eb = new EmbedBuilder()
                             .setTitle("Server Status: " + json.getString("Name"))
+                            .addField("Owner ID", String.valueOf(ownerId), true)
+                            .addField("Co-Owner IDs", coOwnerList.toString(), true)
                             .addField("Players", json.getInt("CurrentPlayers") + "/" + json.getInt("MaxPlayers"), true)
                             .addField("Join Key", json.getString("JoinKey"), true)
                             .addField("Team Balance", json.getBoolean("TeamBalance") ? "Enabled" : "Disabled", true)
@@ -100,6 +116,7 @@ public class ERLCCommandHandler extends ListenerAdapter {
                     event.getHook().sendMessageEmbeds(eb.build()).queue();
                 }
             });
+
             case "players" -> erlcService.getPlayers(key).thenAccept(res -> {
                 if (res.startsWith("ERROR")) {
                     event.getHook().sendMessage(res).queue();
@@ -120,6 +137,7 @@ public class ERLCCommandHandler extends ListenerAdapter {
                     event.getHook().sendMessageEmbeds(eb.build()).queue();
                 }
             });
+
             case "killlogs" -> erlcService.getKillLogs(key).thenAccept(res -> {
                 if (res.startsWith("ERROR")) {
                     event.getHook().sendMessage(res).queue();
@@ -136,6 +154,7 @@ public class ERLCCommandHandler extends ListenerAdapter {
                     event.getHook().sendMessageEmbeds(eb.build()).queue();
                 }
             });
+
             case "vehicles" -> erlcService.getVehicles(key).thenAccept(res -> {
                 if (res.startsWith("ERROR")) {
                     event.getHook().sendMessage(res).queue();
