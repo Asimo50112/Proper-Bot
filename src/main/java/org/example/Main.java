@@ -25,7 +25,8 @@ public class Main {
                         new ERLCRemoteCommand(),  // Handles /c
                         new JoinCommand(),
                         new ERLCStatusCommand(),// Handles /join
-                        new ERLCPlayersCommand())
+                        new ERLCPlayersCommand()),
+                        new PurgeCommand
                     .build()
                     .awaitReady();
 
@@ -36,7 +37,8 @@ public class Main {
                     ERLCRemoteCommand.getCommandData(),
                     JoinCommand.getCommandData(),
                     ERLCStatusCommand.getCommandData(),
-                    ERLCPlayersCommand.getCommandData()
+                    ERLCPlayersCommand.getCommandData(),
+                    PurgeCommand.getCommandData(),
             ).queue();
 
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
