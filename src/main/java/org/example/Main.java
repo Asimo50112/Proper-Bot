@@ -36,6 +36,7 @@ public class Main {
                     new ERLCStatusCommand(),
                     new ERLCPlayersCommand(),
                     new PurgeCommand(),
+                    new PromotionCommand()
                     vehicleGuard
             );
 
@@ -47,7 +48,8 @@ public class Main {
                     ERLCStatusCommand.getCommandData(),
                     ERLCPlayersCommand.getCommandData(),
                     PurgeCommand.getCommandData(),
-                    ERLCVehicleGuard.getCommandData() 
+                    ERLCVehicleGuard.getCommandData(), 
+                    PromotionCommand.getCommandData()
             ).queue(success -> System.out.println("Successfully synced all 7 commands."));
 
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
