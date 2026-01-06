@@ -1,130 +1,110 @@
 package org.example;
 
-import net.dv8tion.jda.api.EmbedBuilder;
-import net.dv8tion.jda.api.Permission;
-import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
-import net.dv8tion.jda.api.hooks.ListenerAdapter;
-import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
-import net.dv8tion.jda.api.interactions.commands.OptionType;
-import net.dv8tion.jda.api.interactions.commands.build.CommandData;
-import net.dv8tion.jda.api.interactions.commands.build.Commands;
-import net.dv8tion.jda.api.interactions.commands.build.SubcommandData;
-import org.json.JSONObject;
-
-import java.awt.Color;
+import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.JDABuilder;
+import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.requests.GatewayIntent;
+import net.dv8tion.jda.api.utils.ChunkingFilter;
+import net.dv8tion.jda.api.utils.MemberCachePolicy;
+import net.dv8tion.jda.api.utils.cache.CacheFlag;
 import java.io.*;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.Properties;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-public class ERLCRemoteCommand extends ListenerAdapter {
-    private final HttpClient client = HttpClient.newBuilder()
-            .connectTimeout(java.time.Duration.ofSeconds(10))
-            .build();
+public class Main {
+    private static String token;
 
-    public static CommandData getCommandData() {
-        return Commands.slash("c", "Remote command management")
-                .addSubcommands(
-                    new SubcommandData("run", "Run an in-game command")
-                        .addOption(OptionType.STRING, "cmd", "Command (e.g. :m Hello)", true),
-                    new SubcommandData("setrole", "Set the staff role allowed to use /c run")
-                        .addOption(OptionType.ROLE, "role", "The role to authorize", true)
-                );
-    }
-
-    @Override
-    public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
-        if (!event.getName().equals("c") || event.getGuild() == null) return;
-
-        String subcommand = event.getSubcommandName();
-        String guildId = event.getGuild().getId();
-
-        if (subcommand.equals("setrole")) {
-            // Check for Admin permission to set the role
-            if (!event.getMember().hasPermission(Permission.ADMINISTRATOR)) {
-                event.reply("Only Administrators can set the authorized role.").setEphemeral(true).queue();
-                return;
-            }
-            
-            String roleId = event.getOption("role").getAsRole().getId();
-            saveProperty(guildId + "_role", roleId);
-            event.reply("Authorized role updated to: " + event.getOption("role").getAsRole().getName()).setEphemeral(true).queue();
+    public static void main(String[] args) throws Exception {
+        if (!loadConfig()) {
+            System.out.println("-------------------------------------------------------");
+            System.out.println("CONFIG CREATED: Please put your token in bot-token.properties");
+            System.out.println("-------------------------------------------------------");
             return;
         }
 
-        if (subcommand.equals("run")) {
-            // --- Permission Check Logic ---
-            String requiredRoleId = getSavedProperty(guildId + "_role");
-            boolean isAllowed = event.getMember().hasPermission(Permission.ADMINISTRATOR);
+        try {
+            // 1. Initialize the Guard instance
+            ERLCVehicleGuard vehicleGuard = new ERLCVehicleGuard();
 
-            if (!isAllowed && requiredRoleId != null) {
-                isAllowed = event.getMember().getRoles().stream()
-                        .anyMatch(role -> role.getId().equals(requiredRoleId));
-            }
+            // 2. Build JDA with High-Authority Intents
+            JDA jda = JDABuilder.createDefault(token)
+                    .enableIntents(
+                        GatewayIntent.GUILD_MEMBERS, 
+                        GatewayIntent.GUILD_MESSAGES, 
+                        GatewayIntent.GUILD_PRESENCES, // Helps JDA track role updates
+                        GatewayIntent.MESSAGE_CONTENT
+                    )
+                    // Ensure the bot caches EVERYONE immediately
+                    .setMemberCachePolicy(MemberCachePolicy.ALL)
+                    .setChunkingFilter(ChunkingFilter.ALL)
+                    // Enable role and presence caching
+                    .enableCache(CacheFlag.ROLE_SETTING, CacheFlag.ONLINE_STATUS)
+                    .addEventListeners(
+                            new ERLCSetupCommand(),
+                            new ERLCRemoteCommand(),
+                            new JoinCommand(),
+                            new ERLCStatusCommand(),
+                            new ERLCPlayersCommand(),
+                            new PurgeCommand(),
+                            vehicleGuard 
+                    )
+                    .build()
+                    .awaitReady();
 
-            if (!isAllowed) {
-                event.reply("You do not have the authorized role to run in-game commands.").setEphemeral(true).queue();
-                return;
-            }
+            // 3. Register Commands
+            jda.updateCommands().addCommands(
+                    ERLCSetupCommand.getCommandData(),
+                    ERLCRemoteCommand.getCommandData(),
+                    JoinCommand.getCommandData(),
+                    ERLCStatusCommand.getCommandData(),
+                    ERLCPlayersCommand.getCommandData(),
+                    PurgeCommand.getCommandData(),
+                    ERLCVehicleGuard.getCommandData()
+            ).queue(success -> System.out.println("Slash commands synced."));
 
-            // --- Execution Logic ---
-            event.deferReply().queue();
-            String apiKey = getSavedProperty(guildId);
-            if (apiKey == null) {
-                event.getHook().sendMessage("API key not set. Use /erlc-apikey first.").queue();
-                return;
-            }
+            // 4. THE SCANNER LOOP
+            ScheduledExecutorService scannerLoop = Executors.newSingleThreadScheduledExecutor();
+            scannerLoop.scheduleAtFixedRate(() -> {
+                System.out.println("[System] Initializing 20-second vehicle scan...");
+                for (Guild guild : jda.getGuilds()) {
+                    try {
+                        vehicleGuard.performScan(guild);
+                    } catch (Exception e) {
+                        System.err.println("[Error] Scan failed for " + guild.getName() + ": " + e.getMessage());
+                    }
+                }
+            }, 10, 20, TimeUnit.SECONDS);
 
-            String cmd = event.getOption("cmd").getAsString();
-            executePrcCommand(event, apiKey, cmd);
+            System.out.println("Bot is online as: " + jda.getSelfUser().getName());
+            System.out.println("Presence Intent enabled. Member cache: " + jda.getUsers().size());
+
+        } catch (Exception e) {
+            System.err.println("CRITICAL ERROR: Bot failed to start.");
+            e.printStackTrace();
         }
     }
 
-    private void executePrcCommand(SlashCommandInteractionEvent event, String apiKey, String cmd) {
-        JSONObject body = new JSONObject().put("command", cmd);
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("https://api.policeroleplay.community/v1/server/command"))
-                .header("server-key", apiKey)
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                .build();
-
-        client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-            .orTimeout(12, TimeUnit.SECONDS)
-            .thenAccept(res -> {
-                String responseMsg = "Command sent.";
-                if (!res.body().isEmpty() && res.body().startsWith("{")) {
-                    JSONObject json = new JSONObject(res.body());
-                    if (json.has("message")) responseMsg = json.getString("message");
-                }
-                event.getHook().sendMessageEmbeds(new EmbedBuilder()
-                        .setTitle("Remote Execution")
-                        .setDescription("`" + cmd + "`\n**Result:** " + responseMsg)
-                        .setColor(Color.GREEN).build()).queue();
-            })
-            .exceptionally(ex -> {
-                event.getHook().sendMessage("Request timed out or failed.").queue();
-                return null;
-            });
-    }
-
-    private void saveProperty(String key, String value) {
-        Properties p = new Properties();
+    private static boolean loadConfig() {
+        Properties prop = new Properties();
+        File configFile = new File("bot-token.properties");
         try {
-            File f = new File("guild-keys.properties");
-            if (f.exists()) { try (InputStream i = new FileInputStream(f)) { p.load(i); } }
-            p.setProperty(key, value);
-            try (OutputStream o = new FileOutputStream(f)) { p.store(o, null); }
-        } catch (IOException e) { e.printStackTrace(); }
-    }
-
-    private String getSavedProperty(String key) {
-        Properties p = new Properties();
-        try (InputStream i = new FileInputStream("guild-keys.properties")) {
-            p.load(i); return p.getProperty(key);
-        } catch (IOException e) { return null; }
+            if (!configFile.exists()) {
+                try (OutputStream output = new FileOutputStream(configFile)) {
+                    prop.setProperty("bot_token", "INSERT_TOKEN_HERE");
+                    prop.store(output, "Discord Bot Token");
+                }
+                return false;
+            }
+            try (InputStream input = new FileInputStream(configFile)) {
+                prop.load(input);
+                token = prop.getProperty("bot_token");
+                return (token != null && !token.equals("INSERT_TOKEN_HERE") && !token.isEmpty());
+            }
+        } catch (IOException ex) {
+            ex.printStackTrace();
+            return false;
+        }
     }
 }
