@@ -26,7 +26,7 @@ public class Main {
                             new JoinCommand(),        // /join
                             new ERLCStatusCommand(),   // /status
                             new ERLCPlayersCommand(),  // /players
-                            new PurgeCommand()
+                            new PurgeCommand(),
                             new ERLCVehicleGuard()
                     )
                     .build()
