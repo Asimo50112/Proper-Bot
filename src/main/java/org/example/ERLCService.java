@@ -7,46 +7,97 @@ import java.net.http.HttpResponse;
 import java.util.concurrent.CompletableFuture;
 
 public class ERLCService {
-    private final HttpClient client = HttpClient.newHttpClient();
+    private final HttpClient client;
     private static final String BASE_URL = "https://api.policeroleplay.community/v1";
 
-    /**
-     * Checks if the API key is "real" by attempting to fetch server info.
-     */
-    public CompletableFuture<Boolean> isValidKey(String apiKey) {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(BASE_URL + "/server"))
-                .header("server-key", apiKey)
-                .GET()
-                .build();
-
-        return client.sendAsync(request, HttpResponse.BodyHandlers.discarding())
-                .thenApply(res -> res.statusCode() == 200);
+    public ERLCService() {
+        this.client = HttpClient.newHttpClient();
     }
 
     /**
-     * Handles the heavy lifting of sending command data to PRC
+     * The core engine that processes all API requests.
+     * It handles the authentication header and parses status codes.
      */
-    public CompletableFuture<String> executeInGameCommand(String apiKey, String command) {
-        String json = "{\"command\": \"" + command + "\"}";
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(BASE_URL + "/server/command"))
+    private CompletableFuture<String> sendRequest(String apiKey, String endpoint, String method, String jsonBody) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(BASE_URL + endpoint))
                 .header("server-key", apiKey)
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .build();
+                .header("Accept", "application/json");
 
-        return client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+        if (method.equals("POST")) {
+            builder.header("Content-Type", "application/json")
+                   .POST(HttpRequest.BodyPublishers.ofString(jsonBody == null ? "" : jsonBody));
+        } else {
+            builder.GET();
+        }
+
+        return client.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString())
                 .thenApply(res -> {
-                    return switch (res.statusCode()) {
-                        case 200 -> "✅ Success: Command sent to game.";
-                        case 403 -> "❌ Error: API Key is invalid or expired.";
-                        case 422 -> "⚠️ Error: Private server must have players in it to run commands.";
-                        case 429 -> "⏳ Error: You are being rate limited by PRC.";
-                        default -> "❌ PRC API Error: " + res.statusCode();
+                    int status = res.statusCode();
+                    return switch (status) {
+                        case 200 -> res.body().isEmpty() ? "Request successful." : res.body();
+                        case 400 -> "Bad Request: Check your command syntax.";
+                        case 403 -> "Unauthorized: The API key provided is invalid.";
+                        case 422 -> "Unprocessable Content: The server must have players in it to use this endpoint.";
+                        case 429 -> "Rate Limited: You are sending requests too fast.";
+                        case 500 -> "Internal Server Error: Problem communicating with Roblox.";
+                        default -> "Unexpected Error: HTTP " + status;
                     };
                 });
+    }
+
+    // --- Validation ---
+    public CompletableFuture<Boolean> verifyKey(String apiKey) {
+        // Attempts to fetch server status as a handshake test
+        return sendRequest(apiKey, "/server", "GET", null)
+                .thenApply(res -> !res.contains("Unauthorized"));
+    }
+
+    // --- Commands (The /c command logic) ---
+    public CompletableFuture<String> postCommand(String key, String command) {
+        String payload = "{\"command\": \"" + command + "\"}";
+        return sendRequest(key, "/server/command", "POST", payload);
+    }
+
+    // --- Server Information ---
+    public CompletableFuture<String> getStatus(String key) {
+        return sendRequest(key, "/server", "GET", null);
+    }
+
+    public CompletableFuture<String> getPlayers(String key) {
+        return sendRequest(key, "/server/players", "GET", null);
+    }
+
+    public CompletableFuture<String> getStaff(String key) {
+        return sendRequest(key, "/server/staff", "GET", null);
+    }
+
+    public CompletableFuture<String> getVehicles(String key) {
+        return sendRequest(key, "/server/vehicles", "GET", null);
+    }
+
+    public CompletableFuture<String> getQueue(String key) {
+        return sendRequest(key, "/server/queue", "GET", null);
+    }
+
+    public CompletableFuture<String> getBans(String key) {
+        return sendRequest(key, "/server/bans", "GET", null);
+    }
+
+    // --- Logs ---
+    public CompletableFuture<String> getJoinLogs(String key) {
+        return sendRequest(key, "/server/joinlogs", "GET", null);
+    }
+
+    public CompletableFuture<String> getKillLogs(String key) {
+        return sendRequest(key, "/server/killlogs", "GET", null);
+    }
+
+    public CompletableFuture<String> getCommandLogs(String key) {
+        return sendRequest(key, "/server/commandlogs", "GET", null);
+    }
+
+    public CompletableFuture<String> getModCalls(String key) {
+        return sendRequest(key, "/server/modcalls", "GET", null);
     }
 }
