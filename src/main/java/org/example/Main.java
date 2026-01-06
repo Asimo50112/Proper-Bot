@@ -2,15 +2,18 @@ package org.example;
 
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
+import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import java.io.*;
 import java.util.Properties;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class Main {
     private static String token;
 
     public static void main(String[] args) throws Exception {
-        // Step 1: Load config from bot-token.properties
         if (!loadConfig()) {
             System.out.println("-------------------------------------------------------");
             System.out.println("CONFIG CREATED: Please put your token in bot-token.properties");
@@ -18,24 +21,25 @@ public class Main {
             return;
         }
 
-        // Step 2: Initialize JDA
         try {
+            // 1. Create the Vehicle Guard instance FIRST so we can use it in the loop
+            ERLCVehicleGuard vehicleGuard = new ERLCVehicleGuard();
+
             JDA jda = JDABuilder.createDefault(token)
-                    // CRITICAL: Required to see members and check roles for Vehicle Guard /c
-                    .enableIntents(GatewayIntent.GUILD_MEMBERS) 
+                    .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_MESSAGES) 
                     .addEventListeners(
-                            new ERLCSetupCommand(),   // /erlc-apikey
-                            new ERLCRemoteCommand(),  // /c
-                            new JoinCommand(),        // /join
-                            new ERLCStatusCommand(),  // /status
-                            new ERLCPlayersCommand(), // /players
-                            new PurgeCommand(),       // Fixed: Added Comma
-                            new ERLCVehicleGuard()    // Fixed: Added Comma
+                            new ERLCSetupCommand(),
+                            new ERLCRemoteCommand(),
+                            new JoinCommand(),
+                            new ERLCStatusCommand(),
+                            new ERLCPlayersCommand(),
+                            new PurgeCommand(),
+                            vehicleGuard // Use the instance created above
                     )
                     .build()
                     .awaitReady();
 
-            // Step 3: Register all slash commands with Discord
+            // 2. Register Slash Commands
             jda.updateCommands().addCommands(
                     ERLCSetupCommand.getCommandData(),
                     ERLCRemoteCommand.getCommandData(),
@@ -46,9 +50,24 @@ public class Main {
                     ERLCVehicleGuard.getCommandData()
             ).queue();
 
+            // 3. START THE 20-SECOND LOOP
+            ScheduledExecutorService scannerLoop = Executors.newSingleThreadScheduledExecutor();
+            scannerLoop.scheduleAtFixedRate(() -> {
+                for (Guild guild : jda.getGuilds()) {
+                    try {
+                        // We call the scan method directly for every guild the bot is in
+                        vehicleGuard.performScan(guild, null);
+                    } catch (Exception e) {
+                        System.err.println("Error scanning guild " + guild.getName() + ": " + e.getMessage());
+                    }
+                }
+            }, 10, 20, TimeUnit.SECONDS);
+
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
+            System.out.println("Vehicle Guard Auto-Scan started (20s interval)");
+
         } catch (Exception e) {
-            System.err.println("Failed to login! Your token in bot-token.properties is likely wrong.");
+            System.err.println("Critical Error during startup:");
             e.printStackTrace();
         }
     }
@@ -56,7 +75,6 @@ public class Main {
     private static boolean loadConfig() {
         Properties prop = new Properties();
         File configFile = new File("bot-token.properties");
-
         try {
             if (!configFile.exists()) {
                 try (OutputStream output = new FileOutputStream(configFile)) {
@@ -65,7 +83,6 @@ public class Main {
                 }
                 return false;
             }
-
             try (InputStream input = new FileInputStream(configFile)) {
                 prop.load(input);
                 token = prop.getProperty("bot_token");
