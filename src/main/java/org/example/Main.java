@@ -19,18 +19,12 @@ public class Main {
         if (!loadConfig()) return;
 
         try {
-            // 1. Create the instance of the guard
             ERLCVehicleGuard vehicleGuard = new ERLCVehicleGuard();
 
-            // 2. Build JDA with required Privileged Intents
             JDA jda = JDABuilder.createDefault(token)
-                    .enableIntents(
-                        GatewayIntent.GUILD_MEMBERS, 
-                        GatewayIntent.GUILD_MESSAGES, 
-                        GatewayIntent.MESSAGE_CONTENT
-                    )
-                    .setMemberCachePolicy(MemberCachePolicy.ALL)
-                    .setChunkingFilter(ChunkingFilter.ALL)
+                    .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_MESSAGES, GatewayIntent.MESSAGE_CONTENT)
+                    .setMemberCachePolicy(MemberCachePolicy.ALL) // Cache everyone
+                    .setChunkingFilter(ChunkingFilter.ALL)      // Download everyone on start
                     .addEventListeners(
                             new ERLCSetupCommand(),
                             new ERLCRemoteCommand(),
@@ -38,12 +32,11 @@ public class Main {
                             new ERLCStatusCommand(),
                             new ERLCPlayersCommand(),
                             new PurgeCommand(),
-                            vehicleGuard // Register the guard instance
+                            vehicleGuard
                     )
                     .build()
                     .awaitReady();
 
-            // 3. Register Slash Commands
             jda.updateCommands().addCommands(
                     ERLCSetupCommand.getCommandData(),
                     ERLCRemoteCommand.getCommandData(),
@@ -54,23 +47,17 @@ public class Main {
                     ERLCVehicleGuard.getCommandData()
             ).queue();
 
-            // 4. THE 20-SECOND AUTO-SCAN LOOP
+            // Background Loop
             ScheduledExecutorService scannerLoop = Executors.newSingleThreadScheduledExecutor();
             scannerLoop.scheduleAtFixedRate(() -> {
                 for (Guild guild : jda.getGuilds()) {
-                    try {
-                        vehicleGuard.performScan(guild);
-                    } catch (Exception e) {
-                        System.err.println("Scan error for " + guild.getName() + ": " + e.getMessage());
-                    }
+                    vehicleGuard.performScan(guild);
                 }
             }, 10, 20, TimeUnit.SECONDS);
 
-            System.out.println("Bot Online! Vehicle Guard scanning every 20 seconds.");
+            System.out.println("Bot Started! Monitoring vehicles every 20 seconds.");
 
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
     private static boolean loadConfig() {
@@ -79,16 +66,15 @@ public class Main {
         try {
             if (!f.exists()) {
                 try (OutputStream o = new FileOutputStream(f)) {
-                    prop.setProperty("bot_token", "INSERT_TOKEN_HERE");
+                    prop.setProperty("bot_token", "TOKEN_HERE");
                     prop.store(o, null);
                 }
-                System.out.println("Please set your token in bot-token.properties");
                 return false;
             }
             try (InputStream i = new FileInputStream(f)) {
                 prop.load(i);
                 token = prop.getProperty("bot_token");
-                return token != null && !token.equals("INSERT_TOKEN_HERE");
+                return token != null && !token.equals("TOKEN_HERE");
             }
         } catch (IOException e) { return false; }
     }
