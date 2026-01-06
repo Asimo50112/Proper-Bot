@@ -1,6 +1,7 @@
 package org.example;
 
 import net.dv8tion.jda.api.Permission;
+import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
@@ -16,6 +17,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -23,15 +25,18 @@ import java.util.concurrent.TimeUnit;
 
 public class ERLCVehicleGuard extends ListenerAdapter {
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(10)).build();
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
-    private static final String RESTRICTION_KEY = "_restricted_cars";
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+    private static final String FILE = "guild-keys.properties";
 
     public static CommandData getCommandData() {
-        return Commands.slash("vehicle-restrictions", "Manage car restrictions and scans")
+        return Commands.slash("vehicle-restrictions", "Manage car restrictions")
                 .addSubcommands(
-                    new SubcommandData("add", "Add a car to the restricted list").addOption(OptionType.STRING, "carname", "Exact name of the car", true),
-                    new SubcommandData("remove", "Remove a car from the list").addOption(OptionType.STRING, "carname", "Exact name of the car", true),
-                    new SubcommandData("list", "List all restricted cars"),
+                    new SubcommandData("add", "Restrict a car to a specific role")
+                        .addOption(OptionType.STRING, "carname", "Exact name from PRC (e.g. 2019 Falcon Interceptor Utility)", true)
+                        .addOption(OptionType.ROLE, "role", "Role allowed to drive this car", true),
+                    new SubcommandData("remove", "Remove restriction from a car")
+                        .addOption(OptionType.STRING, "carname", "Car name to unrestrict", true),
+                    new SubcommandData("list", "List all restricted cars and their roles"),
                     new SubcommandData("scan", "Check server for unauthorized drivers")
                 )
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.ADMINISTRATOR));
@@ -40,103 +45,136 @@ public class ERLCVehicleGuard extends ListenerAdapter {
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         if (!event.getName().equals("vehicle-restrictions") || event.getGuild() == null) return;
-
+        
         String sub = event.getSubcommandName();
         String guildId = event.getGuild().getId();
-        
+
         switch (sub) {
             case "add" -> {
                 String car = event.getOption("carname").getAsString();
-                String current = getProperty(guildId + RESTRICTION_KEY, "");
-                saveProperty(guildId + RESTRICTION_KEY, current + car + ",");
-                event.reply("Added **" + car + "** to restrictions.").setEphemeral(true).queue();
+                String roleId = event.getOption("role").getAsRole().getId();
+                saveProperty(guildId + "_v_role_" + car, roleId);
+                event.reply("Restriction saved: **" + car + "** now requires the specified role.").setEphemeral(true).queue();
             }
             case "remove" -> {
                 String car = event.getOption("carname").getAsString();
-                String current = getProperty(guildId + RESTRICTION_KEY, "");
-                saveProperty(guildId + RESTRICTION_KEY, current.replace(car + ",", ""));
-                event.reply("Removed **" + car + "** from restrictions.").setEphemeral(true).queue();
+                removeProperty(guildId + "_v_role_" + car);
+                event.reply("Restriction removed for **" + car + "**.").setEphemeral(true).queue();
             }
-            case "list" -> {
-                String list = getProperty(guildId + RESTRICTION_KEY, "None");
-                event.reply("### Restricted Cars:\n" + list.replace(",", "\n")).setEphemeral(true).queue();
-            }
+            case "list" -> handleList(event, guildId);
             case "scan" -> handleScan(event, guildId);
         }
     }
 
     private void handleScan(SlashCommandInteractionEvent event, String guildId) {
         event.deferReply().queue();
-        String apiKey = getProperty(guildId, null);
-        String restrictedRaw = getProperty(guildId + RESTRICTION_KEY, "");
-
-        if (apiKey == null || restrictedRaw.isEmpty()) {
-            event.getHook().sendMessage("API Key not set or no cars restricted.").queue();
+        String apiKey = getProperty(guildId);
+        if (apiKey == null) {
+            event.getHook().sendMessage("Error: API Key not set. Use `/erlc-apikey`.").queue();
             return;
         }
 
+        // 1. Fetch Spawned Vehicles (GET /v1/server/vehicles)
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.policeroleplay.community/v1/server/vehicles"))
                 .header("server-key", apiKey).GET().build();
 
         client.sendAsync(req, HttpResponse.BodyHandlers.ofString()).thenAccept(res -> {
-            JSONArray vehicles = new JSONArray(res.body());
-            int violations = 0;
+            try {
+                JSONArray vehicles = new JSONArray(res.body());
+                int violations = 0;
 
-            for (int i = 0; i < vehicles.length(); i++) {
-                JSONObject v = vehicles.getJSONObject(i);
-                String carName = v.getString("Name");
-                String driverInfo = v.getString("Owner"); // Format "Username:ID"
+                for (int i = 0; i < vehicles.length(); i++) {
+                    JSONObject v = vehicles.getJSONObject(i);
+                    String carName = v.getString("Name");
+                    String robloxOwner = v.getString("Owner"); // As per docs: "flat_bird"
 
-                if (restrictedRaw.contains(carName)) {
-                    String username = driverInfo.split(":")[0];
-                    processViolation(apiKey, username, carName);
-                    violations++;
+                    String requiredRoleId = getProperty(guildId + "_v_role_" + carName);
+                    
+                    if (requiredRoleId != null) {
+                        // 2. Check if the driver is authorized via Discord Role
+                        if (!isAuthorized(event, robloxOwner, requiredRoleId)) {
+                            executePenalty(apiKey, robloxOwner, carName);
+                            violations++;
+                        }
+                    }
                 }
+                event.getHook().sendMessage("Scan complete. Processed **" + violations + "** unauthorized drivers.").queue();
+            } catch (Exception e) {
+                event.getHook().sendMessage("Error: Failed to parse PRC vehicle data.").queue();
             }
-            event.getHook().sendMessage("Scan complete. Processed **" + violations + "** violations.").queue();
         });
     }
 
-    private void processViolation(String apiKey, String username, String carName) {
-        // 1. Immediate Load
+    private boolean isAuthorized(SlashCommandInteractionEvent event, String robloxName, String roleId) {
+        // Logic: Find a Discord member whose nickname or username matches the Roblox owner
+        return event.getGuild().getMembers().stream()
+                .anyMatch(m -> (m.getEffectiveName().equalsIgnoreCase(robloxName)) && 
+                               m.getRoles().stream().anyMatch(r -> r.getId().equals(roleId)));
+    }
+
+    private void executePenalty(String apiKey, String username, String carName) {
+        // Immediate Load
         sendPrcCommand(apiKey, ":load " + username);
 
-        // 2. Scheduled PM (10 Seconds Later)
+        // Delayed PM (10 seconds)
         scheduler.schedule(() -> {
-            String message = ":pm " + username + " You were loaded for using a restricted vehicle (" + carName + "). Please switch cars.";
-            sendPrcCommand(apiKey, message);
+            sendPrcCommand(apiKey, ":pm " + username + " You are not authorized to use the " + carName + ".");
         }, 10, TimeUnit.SECONDS);
     }
 
-    private void sendPrcCommand(String apiKey, String commandText) {
-        JSONObject body = new JSONObject().put("command", commandText);
+    private void sendPrcCommand(String apiKey, String cmd) {
+        JSONObject body = new JSONObject().put("command", cmd);
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.policeroleplay.community/v1/server/command"))
                 .header("server-key", apiKey)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build();
-
         client.sendAsync(req, HttpResponse.BodyHandlers.ofString());
     }
 
-    // --- Data Persistence ---
-    private void saveProperty(String key, String value) {
+    private void handleList(SlashCommandInteractionEvent event, String guildId) {
         Properties p = new Properties();
-        File f = new File("guild-keys.properties");
-        try {
-            if (f.exists()) { try (InputStream i = new FileInputStream(f)) { p.load(i); } }
-            p.setProperty(key, value);
-            try (OutputStream o = new FileOutputStream(f)) { p.store(o, null); }
-        } catch (IOException e) { e.printStackTrace(); }
+        StringBuilder sb = new StringBuilder("### Current Vehicle Restrictions:\n");
+        try (InputStream i = new FileInputStream(FILE)) {
+            p.load(i);
+            p.forEach((k, v) -> {
+                if (k.toString().startsWith(guildId + "_v_role_")) {
+                    String car = k.toString().replace(guildId + "_v_role_", "");
+                    sb.append("• **").append(car).append("**: <@&").append(v).append(">\n");
+                }
+            });
+            event.reply(sb.toString()).setEphemeral(true).queue();
+        } catch (IOException e) { event.reply("No restrictions found.").setEphemeral(true).queue(); }
     }
 
-    private String getProperty(String key, String def) {
+    // --- Persistence ---
+    private void saveProperty(String key, String val) {
         Properties p = new Properties();
-        File f = new File("guild-keys.properties");
-        if (!f.exists()) return def;
-        try (InputStream i = new FileInputStream(f)) {
-            p.load(i); return p.getProperty(key, def);
-        } catch (IOException e) { return def; }
+        try {
+            File f = new File(FILE);
+            if (f.exists()) try (InputStream i = new FileInputStream(f)) { p.load(i); }
+            p.setProperty(key, val);
+            try (OutputStream o = new FileOutputStream(f)) { p.store(o, null); }
+        } catch (IOException ignored) {}
+    }
+
+    private void removeProperty(String key) {
+        Properties p = new Properties();
+        try {
+            File f = new File(FILE);
+            if (f.exists()) {
+                try (InputStream i = new FileInputStream(f)) { p.load(i); }
+                p.remove(key);
+                try (OutputStream o = new FileOutputStream(f)) { p.store(o, null); }
+            }
+        } catch (IOException ignored) {}
+    }
+
+    private String getProperty(String key) {
+        Properties p = new Properties();
+        try (InputStream i = new FileInputStream(FILE)) {
+            p.load(i); return p.getProperty(key);
+        } catch (IOException e) { return null; }
     }
 }
