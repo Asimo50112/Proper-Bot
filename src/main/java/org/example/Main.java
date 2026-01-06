@@ -18,13 +18,15 @@ public class Main {
         }
 
         // Step 2: Build JDA instance
+        // Updated to use ERLCCommandHandler
         JDA jda = JDABuilder.createDefault(token)
-                .addEventListeners(new CommandHandler())
+                .addEventListeners(new ERLCCommandHandler())
                 .build()
                 .awaitReady();
 
-        // Step 3: Register slash commands through the CommandHandler
-        CommandHandler.registerCommands(jda);
+        // Step 3: Register slash commands
+        // Updated reference to the renamed class
+        ERLCCommandHandler.registerCommands(jda);
 
         System.out.println("Bot is online as: " + jda.getSelfUser().getName());
     }
