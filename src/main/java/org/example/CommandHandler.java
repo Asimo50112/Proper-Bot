@@ -1,47 +1,20 @@
 package org.example;
 
-import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
-import net.dv8tion.jda.api.hooks.ListenerAdapter;
-import net.dv8tion.jda.api.interactions.commands.OptionMapping;
-import org.jetbrains.annotations.NotNull;
+import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.JDABuilder;
 
-public class CommandHandler extends ListenerAdapter {
+public class Main {
+    public static void main(String[] args) throws InterruptedException {
+        // ... (Your config loading logic here)
 
-    @Override
-    public void onSlashCommandInteraction(@NotNull SlashCommandInteractionEvent event) {
-        // 1. Identify which command was typed
-        String commandName = event.getName();
+        JDA jda = JDABuilder.createDefault(token)
+                .addEventListeners(new CommandHandler())
+                .build()
+                .awaitReady(); // Important: wait for bot to be ready before registering
 
-        switch (commandName) {
-            case "echo":
-                handleEcho(event);
-                break;
-                
-            case "ping":
-                event.reply("Pong! 🏓").queue();
-                break;
-
-            default:
-                event.reply("Unknown command!").setEphemeral(true).queue();
-                break;
-        }
-    }
-
-    /**
-     * Logic for the /echo command
-     */
-    private void handleEcho(SlashCommandInteractionEvent event) {
-        // Retrieve the "message" option we defined in Main.java
-        OptionMapping messageOption = event.getOption("message");
-
-        if (messageOption == null) {
-            event.reply("You didn't provide a message!").setEphemeral(true).queue();
-            return;
-        }
-
-        String userMessage = messageOption.getAsString();
+        // Tell the handler to register all commands defined in that class
+        CommandHandler.registerCommands(jda);
         
-        // Reply back to the user
-        event.reply("You said: **" + userMessage + "**").queue();
+        System.out.println("Bot is online and commands are registered!");
     }
 }
