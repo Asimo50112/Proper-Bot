@@ -6,7 +6,6 @@ import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import net.dv8tion.jda.api.utils.ChunkingFilter;
 import net.dv8tion.jda.api.utils.MemberCachePolicy;
-import net.dv8tion.jda.api.utils.cache.CacheFlag;
 import java.io.*;
 import java.util.Properties;
 import java.util.concurrent.Executors;
@@ -17,30 +16,21 @@ public class Main {
     private static String token;
 
     public static void main(String[] args) throws Exception {
-        if (!loadConfig()) {
-            System.out.println("-------------------------------------------------------");
-            System.out.println("CONFIG CREATED: Please put your token in bot-token.properties");
-            System.out.println("-------------------------------------------------------");
-            return;
-        }
+        if (!loadConfig()) return;
 
         try {
-            // 1. Initialize the Guard instance
+            // 1. Create the instance of the guard
             ERLCVehicleGuard vehicleGuard = new ERLCVehicleGuard();
 
-            // 2. Build JDA with High-Authority Intents
+            // 2. Build JDA with required Privileged Intents
             JDA jda = JDABuilder.createDefault(token)
                     .enableIntents(
                         GatewayIntent.GUILD_MEMBERS, 
                         GatewayIntent.GUILD_MESSAGES, 
-                        GatewayIntent.GUILD_PRESENCES, // Helps JDA track role updates
                         GatewayIntent.MESSAGE_CONTENT
                     )
-                    // Ensure the bot caches EVERYONE immediately
                     .setMemberCachePolicy(MemberCachePolicy.ALL)
                     .setChunkingFilter(ChunkingFilter.ALL)
-                    // Enable role and presence caching
-                    .enableCache(CacheFlag.ROLE_SETTING, CacheFlag.ONLINE_STATUS)
                     .addEventListeners(
                             new ERLCSetupCommand(),
                             new ERLCRemoteCommand(),
@@ -48,12 +38,12 @@ public class Main {
                             new ERLCStatusCommand(),
                             new ERLCPlayersCommand(),
                             new PurgeCommand(),
-                            vehicleGuard 
+                            vehicleGuard // Register the guard instance
                     )
                     .build()
                     .awaitReady();
 
-            // 3. Register Commands
+            // 3. Register Slash Commands
             jda.updateCommands().addCommands(
                     ERLCSetupCommand.getCommandData(),
                     ERLCRemoteCommand.getCommandData(),
@@ -62,49 +52,44 @@ public class Main {
                     ERLCPlayersCommand.getCommandData(),
                     PurgeCommand.getCommandData(),
                     ERLCVehicleGuard.getCommandData()
-            ).queue(success -> System.out.println("Slash commands synced."));
+            ).queue();
 
-            // 4. THE SCANNER LOOP
+            // 4. THE 20-SECOND AUTO-SCAN LOOP
             ScheduledExecutorService scannerLoop = Executors.newSingleThreadScheduledExecutor();
             scannerLoop.scheduleAtFixedRate(() -> {
-                System.out.println("[System] Initializing 20-second vehicle scan...");
                 for (Guild guild : jda.getGuilds()) {
                     try {
                         vehicleGuard.performScan(guild);
                     } catch (Exception e) {
-                        System.err.println("[Error] Scan failed for " + guild.getName() + ": " + e.getMessage());
+                        System.err.println("Scan error for " + guild.getName() + ": " + e.getMessage());
                     }
                 }
             }, 10, 20, TimeUnit.SECONDS);
 
-            System.out.println("Bot is online as: " + jda.getSelfUser().getName());
-            System.out.println("Presence Intent enabled. Member cache: " + jda.getUsers().size());
+            System.out.println("Bot Online! Vehicle Guard scanning every 20 seconds.");
 
         } catch (Exception e) {
-            System.err.println("CRITICAL ERROR: Bot failed to start.");
             e.printStackTrace();
         }
     }
 
     private static boolean loadConfig() {
         Properties prop = new Properties();
-        File configFile = new File("bot-token.properties");
+        File f = new File("bot-token.properties");
         try {
-            if (!configFile.exists()) {
-                try (OutputStream output = new FileOutputStream(configFile)) {
+            if (!f.exists()) {
+                try (OutputStream o = new FileOutputStream(f)) {
                     prop.setProperty("bot_token", "INSERT_TOKEN_HERE");
-                    prop.store(output, "Discord Bot Token");
+                    prop.store(o, null);
                 }
+                System.out.println("Please set your token in bot-token.properties");
                 return false;
             }
-            try (InputStream input = new FileInputStream(configFile)) {
-                prop.load(input);
+            try (InputStream i = new FileInputStream(f)) {
+                prop.load(i);
                 token = prop.getProperty("bot_token");
-                return (token != null && !token.equals("INSERT_TOKEN_HERE") && !token.isEmpty());
+                return token != null && !token.equals("INSERT_TOKEN_HERE");
             }
-        } catch (IOException ex) {
-            ex.printStackTrace();
-            return false;
-        }
+        } catch (IOException e) { return false; }
     }
 }
