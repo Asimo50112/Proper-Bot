@@ -1,5 +1,6 @@
 package org.example;
 
+import org.json.JSONObject;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -7,18 +8,40 @@ import java.net.http.HttpResponse;
 import java.util.concurrent.CompletableFuture;
 
 public class ERLCService {
-    private final HttpClient client;
+    private final HttpClient client = HttpClient.newHttpClient();
     private static final String BASE_URL = "https://api.policeroleplay.community/v1";
-
-    public ERLCService() {
-        this.client = HttpClient.newHttpClient();
-    }
 
     private CompletableFuture<String> sendRequest(String apiKey, String endpoint, String method, String jsonBody) {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(BASE_URL + endpoint))
                 .header("server-key", apiKey)
                 .header("Accept", "application/json");
+
+        if (method.equals("POST")) {
+            builder.header("Content-Type", "application/json")
+                   .POST(HttpRequest.BodyPublishers.ofString(jsonBody == null ? "" : jsonBody));
+        } else {
+            builder.GET();
+        }
+
+        return client.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString())
+                .thenApply(res -> {
+                    if (res.statusCode() == 200) return res.body();
+                    // Return error codes as plain text for the handler to catch
+                    return "ERROR:" + res.statusCode();
+                });
+    }
+
+    public CompletableFuture<String> postCommand(String key, String command) {
+        return sendRequest(key, "/server/command", "POST", "{\"command\": \"" + command + "\"}");
+    }
+
+    public CompletableFuture<String> getStatus(String key) {
+        return sendRequest(key, "/server", "GET", null);
+    }
+    
+    // ... add your other get methods here following the same pattern
+}
 
         if (method.equals("POST")) {
             builder.header("Content-Type", "application/json")
