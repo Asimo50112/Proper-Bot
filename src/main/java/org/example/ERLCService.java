@@ -31,13 +31,7 @@ public class ERLCService {
                     if (status == 200) {
                         return (res.body() == null || res.body().isEmpty()) ? "{\"message\":\"Success\"}" : res.body();
                     }
-                    return switch (status) {
-                        case 400 -> "ERROR: Bad Request.";
-                        case 403 -> "ERROR: Unauthorized.";
-                        case 422 -> "ERROR: Server is empty.";
-                        case 500 -> "ERROR: Roblox communication failure.";
-                        default -> "ERROR: Status " + status;
-                    };
+                    return "ERROR: " + status;
                 });
     }
 
@@ -69,5 +63,4 @@ public class ERLCService {
     public CompletableFuture<String> getStatus(String key) { return sendRequest(key, "/server", "GET", null); }
     public CompletableFuture<String> getPlayers(String key) { return sendRequest(key, "/server/players", "GET", null); }
     public CompletableFuture<String> getKillLogs(String key) { return sendRequest(key, "/server/killlogs", "GET", null); }
-    public CompletableFuture<String> getVehicles(String key) { return sendRequest(key, "/server/vehicles", "GET", null); }
 }
