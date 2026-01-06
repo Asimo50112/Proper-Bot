@@ -11,8 +11,8 @@ public class ERLCService {
     private static final String BASE_URL = "https://api.policeroleplay.community/v1";
 
     /**
-     * Optimized request handler. 
-     * Returns raw JSON on success (200) or a descriptive error string.
+     * Optimized request handler that returns raw JSON on success (200).
+     * This allows the CommandHandler to extract any field, such as OwnerId.
      */
     private CompletableFuture<String> sendRequest(String apiKey, String endpoint, String method, String jsonBody) {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
@@ -33,15 +33,15 @@ public class ERLCService {
                     String body = res.body();
 
                     if (status == 200) {
-                        // Return raw body so Handler can build Embeds from JSON
+                        // Return the raw body so the handler can parse the Owner and Co-Owner IDs
                         return (body == null || body.isEmpty()) ? "{\"message\":\"Success\"}" : body;
                     }
 
-                    // Return formatted error messages for Discord
+                    // Standardized error messages for the bot to display
                     return switch (status) {
                         case 400 -> "ERROR: Bad Request. Check your command syntax.";
                         case 403 -> "ERROR: Unauthorized. The API key is invalid.";
-                        case 422 -> "ERROR: Unprocessable Content. The server has no players online.";
+                        case 422 -> "ERROR: Unprocessable Content. The server must have players online.";
                         case 429 -> "ERROR: Rate Limited. Slow down requests.";
                         case 500 -> "ERROR: Internal Server Error. Roblox communication failed.";
                         default -> "ERROR: Unexpected status " + status;
@@ -55,17 +55,21 @@ public class ERLCService {
                 .thenApply(res -> !res.startsWith("ERROR"));
     }
 
-    // --- Commands ---
+    // --- Command Execution ---
     public CompletableFuture<String> postCommand(String key, String command) {
         String payload = "{\"command\": \"" + command + "\"}";
         return sendRequest(key, "/server/command", "POST", payload);
     }
 
-    // --- Server Information & Logs (Returns JSON Strings) ---
+    // --- Server Data Endpoints (Raw JSON for Embeds) ---
     public CompletableFuture<String> getStatus(String key) { return sendRequest(key, "/server", "GET", null); }
     public CompletableFuture<String> getPlayers(String key) { return sendRequest(key, "/server/players", "GET", null); }
     public CompletableFuture<String> getStaff(String key) { return sendRequest(key, "/server/staff", "GET", null); }
     public CompletableFuture<String> getVehicles(String key) { return sendRequest(key, "/server/vehicles", "GET", null); }
     public CompletableFuture<String> getJoinLogs(String key) { return sendRequest(key, "/server/joinlogs", "GET", null); }
     public CompletableFuture<String> getKillLogs(String key) { return sendRequest(key, "/server/killlogs", "GET", null); }
+    public CompletableFuture<String> getCommandLogs(String key) { return sendRequest(key, "/server/commandlogs", "GET", null); }
+    public CompletableFuture<String> getModCalls(String key) { return sendRequest(key, "/server/modcalls", "GET", null); }
+    public CompletableFuture<String> getQueue(String key) { return sendRequest(key, "/server/queue", "GET", null); }
+    public CompletableFuture<String> getBans(String key) { return sendRequest(key, "/server/bans", "GET", null); }
 }
