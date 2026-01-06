@@ -93,6 +93,55 @@ public class ERLCCommandHandler extends ListenerAdapter {
                                 .setColor(Color.BLUE);
                         event.getHook().sendMessageEmbeds(eb.build()).queue();
                     });
+                    case "players" -> erlcService.getPlayers(key).thenAccept(res -> {
+    if (res.startsWith("ERROR")) {
+        event.getHook().sendMessage(res).queue();
+        return;
+    }
+
+    JSONArray array = new JSONArray(res);
+    EmbedBuilder eb = new EmbedBuilder()
+            .setTitle("Online Players")
+            .setColor(Color.CYAN);
+
+    if (array.isEmpty()) {
+        eb.setDescription("The server is currently empty.");
+        event.getHook().sendMessageEmbeds(eb.build()).queue();
+    } else {
+        // Collect all Roblox profile link handshakes
+        List<CompletableFuture<String>> playerFutures = new ArrayList<>();
+        List<String> teams = new ArrayList<>();
+
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject p = array.getJSONObject(i);
+            // Extract numerical ID from "PlayerName:Id" string
+            long userId = Long.parseLong(p.getString("Player").split(":")[1]);
+            teams.add(p.getString("Team"));
+            playerFutures.add(erlcService.getRobloxProfileLink(userId));
+        }
+
+        // Wait for all player usernames and links to be fetched
+        CompletableFuture.allOf(playerFutures.toArray(new CompletableFuture[0]))
+            .orTimeout(10, TimeUnit.SECONDS).handle((v, t) -> {
+                if (t != null) {
+                    event.getHook().sendMessage("Error or timeout fetching player profiles.").queue();
+                    return null;
+                }
+
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < playerFutures.size(); i++) {
+                    String profileLink = playerFutures.get(i).join();
+                    String team = teams.get(i);
+                    sb.append("• ").append(profileLink).append(" — *").append(team).append("*\n");
+                }
+
+                eb.setDescription(sb.toString());
+                eb.setFooter("Total Players: " + array.length());
+                event.getHook().sendMessageEmbeds(eb.build()).queue();
+                return null;
+            });
+    }
+});
                     return null;
                 });
         });
