@@ -26,7 +26,8 @@ public class Main {
                             new JoinCommand(),        // /join
                             new ERLCStatusCommand(),   // /status
                             new ERLCPlayersCommand(),  // /players
-                            new PurgeCommand()         // /purge
+                            new PurgeCommand()
+                            new ERLCVehicleGuard()
                     )
                     .build()
                     .awaitReady();
@@ -38,7 +39,8 @@ public class Main {
                     JoinCommand.getCommandData(),
                     ERLCStatusCommand.getCommandData(),
                     ERLCPlayersCommand.getCommandData(),
-                    PurgeCommand.getCommandData()
+                    PurgeCommand.getCommandData(),
+                    ERLCVehicleGuard.getCommandData()
             ).queue();
 
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
