@@ -1,5 +1,6 @@
 package org.example;
 
+import org.json.JSONObject;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -8,15 +9,16 @@ import java.util.concurrent.CompletableFuture;
 
 public class ERLCService {
     private final HttpClient client = HttpClient.newHttpClient();
-    private static final String BASE_URL = "https://api.policeroleplay.community/v1";
+    private static final String PRC_BASE_URL = "https://api.policeroleplay.community/v1";
+    private static final String ROBLOX_USERS_URL = "https://users.roblox.com/v1/users/";
 
     /**
-     * Optimized request handler that returns raw JSON on success (200).
-     * This allows the CommandHandler to extract any field, such as OwnerId.
+     * Internal request handler for PRC API calls.
+     * Returns raw JSON strings for the handler to parse into embeds.
      */
     private CompletableFuture<String> sendRequest(String apiKey, String endpoint, String method, String jsonBody) {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(BASE_URL + endpoint))
+                .uri(URI.create(PRC_BASE_URL + endpoint))
                 .header("server-key", apiKey)
                 .header("Accept", "application/json");
 
@@ -30,22 +32,37 @@ public class ERLCService {
         return client.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString())
                 .thenApply(res -> {
                     int status = res.statusCode();
-                    String body = res.body();
-
                     if (status == 200) {
-                        // Return the raw body so the handler can parse the Owner and Co-Owner IDs
-                        return (body == null || body.isEmpty()) ? "{\"message\":\"Success\"}" : body;
+                        return (res.body() == null || res.body().isEmpty()) ? "{\"message\":\"Success\"}" : res.body();
                     }
-
-                    // Standardized error messages for the bot to display
                     return switch (status) {
-                        case 400 -> "ERROR: Bad Request. Check your command syntax.";
-                        case 403 -> "ERROR: Unauthorized. The API key is invalid.";
-                        case 422 -> "ERROR: Unprocessable Content. The server must have players online.";
-                        case 429 -> "ERROR: Rate Limited. Slow down requests.";
-                        case 500 -> "ERROR: Internal Server Error. Roblox communication failed.";
-                        default -> "ERROR: Unexpected status " + status;
+                        case 400 -> "ERROR: Bad Request.";
+                        case 403 -> "ERROR: Unauthorized API Key.";
+                        case 422 -> "ERROR: Server is empty.";
+                        case 500 -> "ERROR: Roblox communication failure.";
+                        default -> "ERROR: Status " + status;
                     };
+                });
+    }
+
+    /**
+     * Heavy lifting: Fetches a Roblox username and formats it as a clickable profile link.
+     * Use this for OwnerId and CoOwnerIds.
+     */
+    public CompletableFuture<String> getRobloxProfileLink(long userId) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(ROBLOX_USERS_URL + userId))
+                .GET()
+                .build();
+
+        return client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                .thenApply(res -> {
+                    if (res.statusCode() == 200) {
+                        String name = new JSONObject(res.body()).getString("name");
+                        // Returns formatted Markdown link: [Username](URL)
+                        return String.format("[%s](https://www.roblox.com/users/%d/profile)", name, userId);
+                    }
+                    return "Unknown (" + userId + ")";
                 });
     }
 
@@ -57,11 +74,10 @@ public class ERLCService {
 
     // --- Command Execution ---
     public CompletableFuture<String> postCommand(String key, String command) {
-        String payload = "{\"command\": \"" + command + "\"}";
-        return sendRequest(key, "/server/command", "POST", payload);
+        return sendRequest(key, "/server/command", "POST", "{\"command\": \"" + command + "\"}");
     }
 
-    // --- Server Data Endpoints (Raw JSON for Embeds) ---
+    // --- PRC Data Endpoints ---
     public CompletableFuture<String> getStatus(String key) { return sendRequest(key, "/server", "GET", null); }
     public CompletableFuture<String> getPlayers(String key) { return sendRequest(key, "/server/players", "GET", null); }
     public CompletableFuture<String> getStaff(String key) { return sendRequest(key, "/server/staff", "GET", null); }
