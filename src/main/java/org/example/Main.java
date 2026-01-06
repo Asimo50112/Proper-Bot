@@ -36,7 +36,7 @@ public class Main {
                     new ERLCStatusCommand(),
                     new ERLCPlayersCommand(),
                     new PurgeCommand(),
-                    new PromotionCommand()
+                    new PromotionCommand(),
                     vehicleGuard
             );
 
