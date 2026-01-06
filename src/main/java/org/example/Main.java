@@ -6,6 +6,7 @@ import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import net.dv8tion.jda.api.utils.ChunkingFilter;
 import net.dv8tion.jda.api.utils.MemberCachePolicy;
+import net.dv8tion.jda.api.utils.cache.CacheFlag;
 import java.io.*;
 import java.util.Properties;
 import java.util.concurrent.Executors;
@@ -24,19 +25,22 @@ public class Main {
         }
 
         try {
-            // Create the Guard instance first
+            // 1. Initialize the Guard instance
             ERLCVehicleGuard vehicleGuard = new ERLCVehicleGuard();
 
+            // 2. Build JDA with High-Authority Intents
             JDA jda = JDABuilder.createDefault(token)
-                    // 1. ENABLE INTENTS (Must also be enabled in Developer Portal)
                     .enableIntents(
                         GatewayIntent.GUILD_MEMBERS, 
                         GatewayIntent.GUILD_MESSAGES, 
-                        GatewayIntent.DIRECT_MESSAGES
+                        GatewayIntent.GUILD_PRESENCES, // Helps JDA track role updates
+                        GatewayIntent.MESSAGE_CONTENT
                     )
-                    // 2. FORCE MEMBER CACHING (Crucial for role checks)
+                    // Ensure the bot caches EVERYONE immediately
                     .setMemberCachePolicy(MemberCachePolicy.ALL)
-                    .setChunkingFilter(ChunkingFilter.ALL) 
+                    .setChunkingFilter(ChunkingFilter.ALL)
+                    // Enable role and presence caching
+                    .enableCache(CacheFlag.ROLE_SETTING, CacheFlag.ONLINE_STATUS)
                     .addEventListeners(
                             new ERLCSetupCommand(),
                             new ERLCRemoteCommand(),
@@ -49,7 +53,7 @@ public class Main {
                     .build()
                     .awaitReady();
 
-            // Register Slash Commands
+            // 3. Register Commands
             jda.updateCommands().addCommands(
                     ERLCSetupCommand.getCommandData(),
                     ERLCRemoteCommand.getCommandData(),
@@ -58,25 +62,26 @@ public class Main {
                     ERLCPlayersCommand.getCommandData(),
                     PurgeCommand.getCommandData(),
                     ERLCVehicleGuard.getCommandData()
-            ).queue();
+            ).queue(success -> System.out.println("Slash commands synced."));
 
-            // 3. AUTO-SCAN LOOP (Runs every 20 seconds)
+            // 4. THE SCANNER LOOP
             ScheduledExecutorService scannerLoop = Executors.newSingleThreadScheduledExecutor();
             scannerLoop.scheduleAtFixedRate(() -> {
+                System.out.println("[System] Initializing 20-second vehicle scan...");
                 for (Guild guild : jda.getGuilds()) {
                     try {
                         vehicleGuard.performScan(guild);
                     } catch (Exception e) {
-                        System.err.println("Error scanning guild " + guild.getName() + ": " + e.getMessage());
+                        System.err.println("[Error] Scan failed for " + guild.getName() + ": " + e.getMessage());
                     }
                 }
             }, 10, 20, TimeUnit.SECONDS);
 
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
-            System.out.println("Automated Scanner active (20s interval)");
+            System.out.println("Presence Intent enabled. Member cache: " + jda.getUsers().size());
 
         } catch (Exception e) {
-            System.err.println("Critical Error during startup:");
+            System.err.println("CRITICAL ERROR: Bot failed to start.");
             e.printStackTrace();
         }
     }
@@ -95,7 +100,7 @@ public class Main {
             try (InputStream input = new FileInputStream(configFile)) {
                 prop.load(input);
                 token = prop.getProperty("bot_token");
-                return token != null && !token.equals("INSERT_TOKEN_HERE") && !token.isEmpty();
+                return (token != null && !token.equals("INSERT_TOKEN_HERE") && !token.isEmpty());
             }
         } catch (IOException ex) {
             ex.printStackTrace();
