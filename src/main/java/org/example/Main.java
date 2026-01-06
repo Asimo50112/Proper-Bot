@@ -11,7 +11,6 @@ public class Main {
     public static void main(String[] args) throws Exception {
         // Step 1: Load config
         if (!loadConfig()) {
-            // This message triggers if the file was just created
             System.out.println("-------------------------------------------------------");
             System.out.println("CONFIG CREATED: Please put your token in bot-token.properties");
             System.out.println("-------------------------------------------------------");
@@ -20,12 +19,19 @@ public class Main {
 
         // Step 2: Initialize JDA
         try {
+            // Added JoinCommand as an event listener
             JDA jda = JDABuilder.createDefault(token)
-                    .addEventListeners(new ERLCCommandHandler())
+                    .addEventListeners(new ERLCCommandHandler(), new JoinCommand())
                     .build()
                     .awaitReady();
 
-            ERLCCommandHandler.registerCommands(jda);
+            // Step 3: Register all slash commands
+            // We register them together to ensure Discord's command list is accurate
+            jda.updateCommands().addCommands(
+                    ERLCCommandHandler.getCommandData(), 
+                    JoinCommand.getCommandData()
+            ).queue();
+
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
         } catch (Exception e) {
             System.err.println("Failed to login! Your token in bot-token.properties is likely wrong.");
@@ -39,7 +45,6 @@ public class Main {
 
         try {
             if (!configFile.exists()) {
-                // Create the file if it doesn't exist
                 try (OutputStream output = new FileOutputStream(configFile)) {
                     prop.setProperty("bot_token", "INSERT_TOKEN_HERE");
                     prop.store(output, "Discord Bot Token");
@@ -47,12 +52,9 @@ public class Main {
                 return false; 
             }
 
-            // Load the existing file
             try (InputStream input = new FileInputStream(configFile)) {
                 prop.load(input);
                 token = prop.getProperty("bot_token");
-                
-                // Return true only if the token is valid and not the placeholder
                 return token != null && !token.equals("INSERT_TOKEN_HERE") && !token.isEmpty();
             }
         } catch (IOException ex) {
