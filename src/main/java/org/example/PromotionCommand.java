@@ -26,37 +26,41 @@ public class PromotionCommand extends ListenerAdapter {
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         if (!event.getName().equals("promote")) return;
 
-        // 1. Tell Discord to wait (Fixes "Application didn't respond")
+        // 1. Tell Discord to wait (Stops the "thinking" timeout)
         event.deferReply().queue();
 
-        Member target = event.getOption("user").getAsMember();
-        Role role = event.getOption("role").getAsRole();
+        try {
+            Member target = event.getOption("user").getAsMember();
+            Role role = event.getOption("role").getAsRole();
 
-        if (target == null) {
-            event.getHook().sendMessage("Could not find that user.").setEphemeral(true).queue();
-            return;
-        }
-
-        // 2. Attempt to add role
-        event.getGuild().addRoleToMember(target, role).queue(
-            success -> {
-                EmbedBuilder eb = new EmbedBuilder();
-                eb.setTitle("🎊 New Promotion! 🎊");
-                eb.setDescription("Congratulations to " + target.getAsMention() + " on their new rank!");
-                eb.addField("New Role", role.getAsMention(), true);
-                eb.addField("Promoted By", event.getUser().getAsMention(), true);
-                eb.setColor(Color.GREEN);
-                eb.setThumbnail(target.getEffectiveAvatarUrl());
-                eb.setFooter("Promotion System", event.getGuild().getIconUrl());
-                eb.setTimestamp(Instant.now());
-
-                // Use getHook() because we deferred the reply
-                event.getHook().sendMessageEmbeds(eb.build()).queue();
-            },
-            error -> {
-                event.getHook().sendMessage("❌ Error: I cannot give that role. Make sure my role is HIGHER than the role you are trying to give in the server settings.")
-                     .setEphemeral(true).queue();
+            if (target == null) {
+                event.getHook().sendMessage("❌ User not found.").queue();
+                return;
             }
-        );
+
+            // 2. Add the role
+            event.getGuild().addRoleToMember(target, role).queue(
+                success -> {
+                    EmbedBuilder eb = new EmbedBuilder();
+                    eb.setTitle("🎊 New Promotion! 🎊");
+                    eb.setDescription("Congratulations to " + target.getAsMention() + " on their new rank!");
+                    eb.addField("New Role", role.getAsMention(), true);
+                    eb.addField("Promoted By", event.getUser().getAsMention(), true);
+                    eb.setColor(Color.GREEN);
+                    eb.setThumbnail(target.getEffectiveAvatarUrl());
+                    eb.setTimestamp(Instant.now());
+
+                    event.getHook().sendMessageEmbeds(eb.build()).queue();
+                },
+                error -> {
+                    // This triggers if the Bot Role is lower than the target Role
+                    event.getHook().sendMessage("❌ **Hierarchy Error:** My role must be HIGHER than " + role.getName() + " in Server Settings.")
+                         .setEphemeral(true).queue();
+                }
+            );
+        } catch (Exception e) {
+            event.getHook().sendMessage("❌ An internal error occurred. Check console.").queue();
+            e.printStackTrace();
+        }
     }
 }
