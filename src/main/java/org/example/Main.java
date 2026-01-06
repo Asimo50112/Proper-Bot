@@ -35,6 +35,8 @@ public class Main {
                     ERLCSetupCommand.getCommandData(),
                     ERLCRemoteCommand.getCommandData(),
                     JoinCommand.getCommandData()
+                    ERLCStatusCommand.getCommandData(),
+                    ERLCPlayersCommand.getCommandData()
             ).queue();
 
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
