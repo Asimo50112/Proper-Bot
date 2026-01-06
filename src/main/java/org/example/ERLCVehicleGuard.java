@@ -3,7 +3,6 @@ package org.example;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
-import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
@@ -47,7 +46,7 @@ public class ERLCVehicleGuard extends ListenerAdapter {
         if ("add".equals(event.getSubcommandName())) {
             String car = event.getOption("carname").getAsString();
             String roleId = event.getOption("role").getAsRole().getId();
-            saveProperty(event.getGuild().getId() + "_v_role_" + car.toLowerCase(), roleId);
+            saveProperty(event.getGuild().getId() + "_v_role_" + car, roleId);
             event.reply("Restriction set for **" + car + "**.").setEphemeral(true).queue();
         } else if ("scan".equals(event.getSubcommandName())) {
             event.reply("Scanning... check console logs.").setEphemeral(true).queue();
@@ -73,12 +72,12 @@ public class ERLCVehicleGuard extends ListenerAdapter {
                 String robloxOwner = v.getString("Owner");
 
                 // Check for saved restriction
-                String requiredRoleId = getProperty(guild.getId() + "_v_role_" + carName.toLowerCase());
+                String requiredRoleId = getProperty(guild.getId() + "_v_role_" + carName);
                 
                 if (requiredRoleId != null) {
                     System.out.println("[Guard] Spotted restricted car: " + carName + " by " + robloxOwner);
                     
-                    // Fixed method to find members from Discord API
+                    // Search members for exact match of nickname/effective name
                     guild.retrieveMembersByPrefix(robloxOwner, 10).onSuccess(members -> {
                         boolean isAuthorized = false;
                         for (Member m : members) {
@@ -103,7 +102,7 @@ public class ERLCVehicleGuard extends ListenerAdapter {
     }
 
     private void executePenalty(String apiKey, String username, String carName) {
-        // 1. Immediate Load
+        // 1. Immediate Load (using virtual server management as per docs)
         sendPrcCommand(apiKey, ":load " + username);
         
         // 2. Scheduled PM exactly 10 seconds later
