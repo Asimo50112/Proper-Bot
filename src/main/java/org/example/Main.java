@@ -4,6 +4,8 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.requests.GatewayIntent;
+import net.dv8tion.jda.api.utils.ChunkingFilter;
+import net.dv8tion.jda.api.utils.MemberCachePolicy;
 import java.io.*;
 import java.util.Properties;
 import java.util.concurrent.Executors;
@@ -22,11 +24,19 @@ public class Main {
         }
 
         try {
-            // 1. Create the Vehicle Guard instance FIRST so we can use it in the loop
+            // Create the Guard instance first
             ERLCVehicleGuard vehicleGuard = new ERLCVehicleGuard();
 
             JDA jda = JDABuilder.createDefault(token)
-                    .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_MESSAGES) 
+                    // 1. ENABLE INTENTS (Must also be enabled in Developer Portal)
+                    .enableIntents(
+                        GatewayIntent.GUILD_MEMBERS, 
+                        GatewayIntent.GUILD_MESSAGES, 
+                        GatewayIntent.DIRECT_MESSAGES
+                    )
+                    // 2. FORCE MEMBER CACHING (Crucial for role checks)
+                    .setMemberCachePolicy(MemberCachePolicy.ALL)
+                    .setChunkingFilter(ChunkingFilter.ALL) 
                     .addEventListeners(
                             new ERLCSetupCommand(),
                             new ERLCRemoteCommand(),
@@ -34,12 +44,12 @@ public class Main {
                             new ERLCStatusCommand(),
                             new ERLCPlayersCommand(),
                             new PurgeCommand(),
-                            vehicleGuard // Use the instance created above
+                            vehicleGuard 
                     )
                     .build()
                     .awaitReady();
 
-            // 2. Register Slash Commands
+            // Register Slash Commands
             jda.updateCommands().addCommands(
                     ERLCSetupCommand.getCommandData(),
                     ERLCRemoteCommand.getCommandData(),
@@ -50,13 +60,12 @@ public class Main {
                     ERLCVehicleGuard.getCommandData()
             ).queue();
 
-            // 3. START THE 20-SECOND LOOP
+            // 3. AUTO-SCAN LOOP (Runs every 20 seconds)
             ScheduledExecutorService scannerLoop = Executors.newSingleThreadScheduledExecutor();
             scannerLoop.scheduleAtFixedRate(() -> {
                 for (Guild guild : jda.getGuilds()) {
                     try {
-                        // We call the scan method directly for every guild the bot is in
-                        vehicleGuard.performScan(guild, null);
+                        vehicleGuard.performScan(guild);
                     } catch (Exception e) {
                         System.err.println("Error scanning guild " + guild.getName() + ": " + e.getMessage());
                     }
@@ -64,7 +73,7 @@ public class Main {
             }, 10, 20, TimeUnit.SECONDS);
 
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
-            System.out.println("Vehicle Guard Auto-Scan started (20s interval)");
+            System.out.println("Automated Scanner active (20s interval)");
 
         } catch (Exception e) {
             System.err.println("Critical Error during startup:");
