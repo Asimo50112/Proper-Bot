@@ -35,7 +35,8 @@ public class Main {
                     new ERLCPlayersCommand(),
                     new PurgeCommand(),
                     new PromotionCommand(), // ADDED COMMA HERE
-                    vehicleGuard            // GUARD IS NOW PROPERLY INCLUDED
+                    new VehicleGuard(),
+                    new RoleCommand(),// GUARD IS NOW PROPERLY INCLUDED
             );
 
             // SYNC ALL SLASH COMMANDS (Now total of 8 commands)
@@ -47,7 +48,8 @@ public class Main {
                     ERLCPlayersCommand.getCommandData(),
                     PurgeCommand.getCommandData(),
                     ERLCVehicleGuard.getCommandData(), 
-                    PromotionCommand.getCommandData()
+                    PromotionCommand.getCommandData(),
+                    RoleCommand.getCommandData(),
             ).queue(success -> System.out.println("Successfully synced all commands."));
 
             System.out.println("Bot is online as: " + jda.getSelfUser().getName());
